@@ -199,7 +199,24 @@ async def finish_ritual(callback: CallbackQuery, state: FSMContext):
         parse_mode="Markdown"
     )
     await state.clear()
-
+# --- СЕКРЕТНАЯ КОМАНДА ДЛЯ СБРОСА ---
+@dp.message(F.text == "/reset")
+async def reset_timer(message: Message, state: FSMContext):
+    MY_ID = 297967650  # Твой ID
+    
+    if message.from_user.id == MY_ID:
+        db = load_db()
+        user_id = str(message.from_user.id)
+        
+        if user_id in db:
+            del db[user_id]
+            save_db(db)
+            await state.clear()  # Сбрасываем состояние ритуала, если ты "завис"
+            await message.answer("✅ Таймер сброшен. Можешь проводить обряд снова.")
+        else:
+            await message.answer("Таймер не был установлен, ты можешь начинать!")
+    else:
+        await message.answer("У тебя нет прав для этой команды.")
 async def main():
     # Создаем файл БД, если его нет
     if not os.path.exists(DB_FILE):
