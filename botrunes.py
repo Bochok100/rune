@@ -16,7 +16,7 @@ from PIL import Image
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DB_FILE = "users_db.json"
-MY_ID = 297967650  # Твой ID
+MY_ID = 297967650 
 
 # --- REDIS STORAGE ---
 redis = Redis(host='localhost')
@@ -28,12 +28,23 @@ AMINO_ACIDS = {
     "Аргинин": {"codons": ["ЦГЦ", "ЦГУ", "ЦГА", "ЦГГ", "АГА", "АГГ"], "runes": ["Ч", "Y"]},
     "Аланин": {"codons": ["ГЦУ", "ГЦГ", "ГЦЦ", "ГЦА"], "runes": [")", "¥", "𐰉", "𐰈"]},
     "Аспарагин": {"codons": ["ААУ", "ААЦ"], "runes": ["ʎ"]},
+    "Аспарагиновая к-та": {"codons": ["ГАУ", "ГАЦ"], "runes": ["*", "1"]},
     "Валин": {"codons": ["ГУУ", "ГУЦ", "ГУА", "ГУГ"], "runes": ["𐰓", "9", "ς"]},
+    "Глютамин": {"codons": ["ЦАА", "ЦАГ"], "runes": ["Λ", "П"]},
+    "Глютаминовая к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
+    "Гистидин": {"codons": ["ЦАУ", "ЦАЦ"], "runes": ["𐰓"]},
     "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺", "D", "❂"]},
+    "Изолейцин": {"codons": ["АУУ", "АУЦ", "АУА"], "runes": ["I|", "Є"]},
+    "Лейцин": {"codons": ["УУА", "УУГ", "ЦУУ", "ЦУЦ", "ЦУА", "ЦУГ"], "runes": ["Y", "J"]},
+    "Лизин": {"codons": ["ААА", "ААГ"], "runes": ["↑"]},
     "Метионин": {"codons": ["АУГ"], "runes": ["Г"]},
+    "Пролин": {"codons": ["ЦЦУ", "ЦЦГ", "ЦЦЦ", "ЦЦА"], "runes": ["ᛉ"]},
     "Серин": {"codons": ["УЦУ", "УЦГ", "УЦЦ", "УЦА", "АГУ", "АГЦ"], "runes": ["D", "☺"]},
+    "Триптофан": {"codons": ["УГГ"], "runes": ["⌂"]},
     "Тирозин": {"codons": ["УАУ", "УАЦ"], "runes": ["ᛒ", "ᛃ"]},
-    "Треонин": {"codons": ["АЦУ", "АЦГ", "АЦЦ", "АЦА"], "runes": ["ㅋ", "N", "◁", "F"]}
+    "Треонин": {"codons": ["АЦУ", "АЦГ", "АЦЦ", "АЦА"], "runes": ["ㅋ", "N", "◁", "F"]},
+    "Фенилаланин": {"codons": ["УУУ", "УУЦ"], "runes": ["X", "|"]},
+    "Цистеин": {"codons": ["УГУ", "УГЦ"], "runes": ["︽", "h"]}
 }
 
 class Ritual(StatesGroup):
@@ -46,7 +57,7 @@ class Ritual(StatesGroup):
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
-# --- ФУНКЦИИ БД ---
+# --- ФУНКЦИИ ---
 def load_db():
     if os.path.exists(DB_FILE):
         with open(DB_FILE, "r") as f: return json.load(f)
@@ -55,12 +66,12 @@ def load_db():
 def save_db(data):
     with open(DB_FILE, "w") as f: json.dump(data, f)
 
-# --- АДМИН КОМАНДЫ ---
+# --- ХЭНДЛЕРЫ ---
 @dp.message(F.text == "/restart")
 async def restart_bot(message: Message):
     if message.from_user.id == MY_ID:
         await message.answer("🔄 Перезагружаюсь...")
-        os._exit(0) # systemd перезапустит бота сам
+        os._exit(0)
 
 @dp.message(F.text == "/reset")
 async def reset_timer(message: Message, state: FSMContext):
@@ -73,7 +84,6 @@ async def reset_timer(message: Message, state: FSMContext):
         await state.clear()
         await message.answer("✅ Таймер сброшен.")
 
-# --- РИТУАЛ ---
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     db = load_db()
@@ -114,11 +124,12 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
             break
     
     await state.update_data(current_runes=runes)
-    if len(runes) > 1:
-        await callback.message.edit_text(f"🧪 {amino}. Выбери руну:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=r, callback_data=f"rune_{i}")] for i, r in enumerate(runes)]))
-        await state.set_state(Ritual.waiting_for_rune_choice)
-    elif len(runes) == 1:
-        await save_rune_and_continue(callback.message, state, runes[0])
+    if runes:
+        if len(runes) > 1:
+            await callback.message.edit_text(f"🧪 {amino}. Выбери руну:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=r, callback_data=f"rune_{i}")] for i, r in enumerate(runes)]))
+            await state.set_state(Ritual.waiting_for_rune_choice)
+        else:
+            await save_rune_and_continue(callback.message, state, runes[0])
     else:
         await callback.message.answer("Триплет не найден. /start для сброса.")
     await callback.answer()
@@ -132,15 +143,18 @@ async def proc_rune(callback: CallbackQuery, state: FSMContext):
 async def save_rune_and_continue(message: Message, state: FSMContext, rune: str):
     data = await state.get_data()
     runes = data['final_runes'] + [rune]
-    if data['complex_num'] < 3:
-        await state.update_data(complex_num=data['complex_num'] + 1, final_runes=runes)
-        await message.edit_text(f"✅ Руна {rune} сохранена. Комплекс {data['complex_num'] + 1}. СИНЯЯ грань:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=str(i), callback_data=f"throw_{i}") for i in range(1, 5)]]))
+    complex_num = data['complex_num']
+    
+    if complex_num < 3:
+        await state.update_data(complex_num=complex_num + 1, final_runes=runes)
+        await message.edit_text(f"✅ {rune} сохранена. Комплекс {complex_num + 1}. СИНЯЯ грань:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=str(i), callback_data=f"throw_{i}") for i in range(1, 5)]]))
         await state.set_state(Ritual.waiting_for_blue)
     else:
         await message.answer(f"🔮 Готово! Триада: {' | '.join(runes)}")
         await state.set_state(Ritual.waiting_for_completion)
 
 async def main():
+    logging.basicConfig(level=logging.INFO)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
