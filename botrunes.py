@@ -12,6 +12,8 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
+logging.basicConfig(level=logging.INFO)
+
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
 DB_FILE = "users_db.json"
@@ -79,55 +81,153 @@ class Ritual(StatesGroup):
     waiting_for_red = State()
     waiting_for_rune_choice = State()
 
+# --- BOT И DISPATCHER (до всех хэндлеров) ---
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
+
 def load_db():
     if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r") as f: return json.load(f)
+        with open(DB_FILE, "r") as f:
+            return json.load(f)
     return {}
 
 def save_db(data):
-    with open(DB_FILE, "w") as f: json.dump(data, f)
+    with open(DB_FILE, "w") as f:
+        json.dump(data, f)
+
+
+async def save_rune_and_continue(message: Message, state: FSMContext, rune: str):
+    data = await state.get_data()
+    user_id = str(message.chat.id)
+    db = load_db()
+    if user_id not in db:
+        db[user_id] = {"runes": []}
+    db[user_id]["runes"].append({
+        "rune": rune,
+        "amino": data.get("current_amino", ""),
+        "date": datetime.now().isoformat()
+    })
+    save_db(db)
+    await state.clear()
+    await message.answer(f"✅ Твоя руна: **{rune}**\nРитуал завершён.", parse_mode="Markdown")
+
+
+@dp.message(CommandStart())
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎲 Начать ритуал", callback_data="start_ritual")]
+    ])
+    await message.answer("Добро пожаловать в ритуал рун!\nНажми кнопку ниже, чтобы начать.", reply_markup=kb)
+
+
+@dp.callback_query(F.data == "start_ritual")
+async def start_ritual(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🔵 {v}", callback_data=f"throw_{k}") for k, v in BASE_MAP.items()]
+    ])
+    await callback.message.answer("Бросай синий кубик — выбери грань:", reply_markup=kb)
+    await state.set_state(Ritual.waiting_for_blue)
+
+
+@dp.callback_query(Ritual.waiting_for_blue, F.data.startswith("throw_"))
+async def proc_blue(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    val = callback.data.split("_")[1]
+    await state.update_data(blue=val)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🟢 {v}", callback_data=f"throw_{k}") for k, v in BASE_MAP.items()]
+    ])
+    await callback.message.delete()
+    await callback.message.answer(f"Синий: {BASE_MAP[val]}\nТеперь бросай зелёный кубик:", reply_markup=kb)
+    await state.set_state(Ritual.waiting_for_green)
+
+
+@dp.callback_query(Ritual.waiting_for_green, F.data.startswith("throw_"))
+async def proc_green(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    val = callback.data.split("_")[1]
+    await state.update_data(green=val)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🔴 {v}", callback_data=f"throw_{k}") for k, v in BASE_MAP.items()]
+    ])
+    await callback.message.delete()
+    await callback.message.answer(f"Зелёный: {BASE_MAP[val]}\nТеперь бросай красный кубик:", reply_markup=kb)
+    await state.set_state(Ritual.waiting_for_red)
+
 
 @dp.callback_query(Ritual.waiting_for_red, F.data.startswith("throw_"))
 async def proc_red(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
     triplet = BASE_MAP[data['blue']] + BASE_MAP[data['green']] + BASE_MAP[callback.data.split("_")[1]]
-    
+
     amino, runes = "Неизвестно", []
     for name, a_data in AMINO_ACIDS.items():
         if triplet in a_data["codons"]:
             amino, runes = name, a_data["runes"]
             break
-    
+
     await state.update_data(current_runes=runes, current_amino=amino)
     await callback.message.delete()
-    
+
     if runes:
         media_group = []
         for i in range(len(runes)):
             suffix = "" if i == 0 else str(i + 1)
             image_path = f"images/amino/{amino}{suffix}.jpg"
             if os.path.exists(image_path):
-                # Добавляем фото в группу
-                media_group.append(InputMediaPhoto(media=FSInputFile(image_path), caption=f"🧬 {amino} (Руна {i+1})" if len(runes) > 1 else f"🧬 {amino}"))
-        
+                caption = f"🧬 {amino} (Руна {i+1})" if len(runes) > 1 else f"🧬 {amino}"
+                media_group.append(InputMediaPhoto(media=FSInputFile(image_path), caption=caption))
+
         if media_group:
             await bot.send_media_group(chat_id=callback.message.chat.id, media=media_group)
         else:
-            await bot.send_message(chat_id=callback.message.chat.id, text=f"🧬 **{amino}**\n*(Картинки не найдены)*", parse_mode="Markdown")
+            await bot.send_message(
+                chat_id=callback.message.chat.id,
+                text=f"🧬 **{amino}**\n*(Картинки не найдены)*",
+                parse_mode="Markdown"
+            )
 
-        await bot.send_message(chat_id=callback.message.chat.id, text=AMINO_DESCRIPTIONS.get(amino, "Описание не найдено."))
+        await bot.send_message(
+            chat_id=callback.message.chat.id,
+            text=AMINO_DESCRIPTIONS.get(amino, "Описание не найдено.")
+        )
 
         if len(runes) > 1:
-            kb_buttons = [[InlineKeyboardButton(text=f"👉 Руна {i+1} ({r})", callback_data=f"rune_{i}")] for i, r in enumerate(runes)]
-            await bot.send_message(chat_id=callback.message.chat.id, text="Посмотри на картинки и сделай выбор:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons))
+            kb_buttons = [
+                [InlineKeyboardButton(text=f"👉 Руна {i+1} ({r})", callback_data=f"rune_{i}")]
+                for i, r in enumerate(runes)
+            ]
+            await bot.send_message(
+                chat_id=callback.message.chat.id,
+                text="Посмотри на картинки и сделай выбор:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+            )
             await state.set_state(Ritual.waiting_for_rune_choice)
         else:
             await save_rune_and_continue(callback.message, state, runes[0])
     else:
-        await bot.send_message(callback.message.chat.id, "Триплет не найден.")
+        await bot.send_message(callback.message.chat.id, f"Триплет {triplet} не найден.")
+        await state.clear()
 
-# (Остальные функции: proc_blue, proc_green, proc_rune, save_rune_and_continue, main - оставь как были)
+
+@dp.callback_query(Ritual.waiting_for_rune_choice, F.data.startswith("rune_"))
+async def proc_rune(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    rune_index = int(callback.data.split("_")[1])
+    runes = data.get("current_runes", [])
+    chosen_rune = runes[rune_index] if rune_index < len(runes) else "?"
+    await callback.message.delete()
+    await save_rune_and_continue(callback.message, state, chosen_rune)
+
+
+# --- ЗАПУСК ---
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
