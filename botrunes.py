@@ -22,7 +22,7 @@ DB_FILE = "users_db.json"
 MY_ID = 297967650
 
 # ВСТАВЬ СЮДА ПРАВИЛЬНЫЙ ТОКЕН (Он должен содержать слово :TEST: внутри)
-PAYMENT_TOKEN = "ТВОЙ_ТОКЕН_СО_СЛОВОМ_TEST"
+PAYMENT_TOKEN = "381764678:TEST:181793"
 
 # --- REDIS STORAGE ---
 redis = Redis(host='localhost')
