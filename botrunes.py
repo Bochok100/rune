@@ -240,7 +240,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
 @dp.message(Command("buy"))
 async def send_invoice(message: Message):
     # Если токен не заменен, бот выдаст понятное предупреждение
-    if "СЛОВОМ_TEST" in PAYMENT_TOKEN:381764678:TEST:181793
+    if "СЛОВОМ_TEST" in PAYMENT_TOKEN:
         await message.answer("⚠️ Ошибка: Ты забыл вставить тестовый токен от ЮKassa в код бота (переменная PAYMENT_TOKEN).")
         return
 
