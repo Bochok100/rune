@@ -181,44 +181,41 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
             break
     
     await state.update_data(current_runes=runes, current_amino=amino)
-    
-    # Удаляем старое сообщение с вопросом про красную грань
     await callback.message.delete()
     
     if runes:
-        # Отправляем картинку и описание
-        desc_text = AMINO_DESCRIPTIONS.get(amino, "Описание пока не добавлено.")
-        image_path = f"images/amino/{amino}.jpg"
-        
-        if os.path.exists(image_path):
-            photo = FSInputFile(image_path)
-            await bot.send_photo(chat_id=callback.message.chat.id, photo=photo, caption=f"🧬 **{amino}**", parse_mode="Markdown")
-        else:
-            await bot.send_message(chat_id=callback.message.chat.id, text=f"🧬 **{amino}**\n*(Картинка еще не загружена)*", parse_mode="Markdown")
+        # Отправляем картинки по очереди (если рун несколько)
+        for i in range(len(runes)):
+            suffix = "" if i == 0 else str(i + 1)
+            image_path = f"images/amino/{amino}{suffix}.jpg"
+            
+            caption = f"🧬 **{amino}** (Руна {i+1})" if len(runes) > 1 else f"🧬 **{amino}**"
+            
+            if os.path.exists(image_path):
+                photo = FSInputFile(image_path)
+                await bot.send_photo(chat_id=callback.message.chat.id, photo=photo, caption=caption, parse_mode="Markdown")
+            else:
+                await bot.send_message(chat_id=callback.message.chat.id, text=f"{caption}\n*(Картинка {amino}{suffix}.jpg еще не загружена)*", parse_mode="Markdown")
 
+        # Отправляем описание
+        desc_text = AMINO_DESCRIPTIONS.get(amino, "Описание пока не добавлено.")
         await bot.send_message(chat_id=callback.message.chat.id, text=desc_text)
 
         # Если рун несколько — просим выбрать
         if len(runes) > 1:
             kb_buttons = []
             for i, r in enumerate(runes):
-                if len(runes) == 2:
-                    label = "Левая" if i == 0 else "Правая"
-                elif len(runes) == 3:
-                    label = ["Левая", "Центральная", "Правая"][i]
-                else:
-                    label = f"Вариант {i+1}"
+                label = f"Руна {i+1}"
                 kb_buttons.append([InlineKeyboardButton(text=f"👉 {label} ({r})", callback_data=f"rune_{i}")])
             
             await bot.send_message(
                 chat_id=callback.message.chat.id,
-                text="👆 **Посмотри на картинку выше.**\nЭтой аминокислоте соответствует несколько рун. Сделай свой выбор:",
+                text="👆 **Посмотри на картинки выше.**\nЭтой аминокислоте соответствует несколько рун. Сделай свой выбор:",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons)
             )
             await state.set_state(Ritual.waiting_for_rune_choice)
         else:
-            # Если руна одна — сохраняем автоматически
             await save_rune_and_continue(callback.message, state, runes[0])
     else:
         await bot.send_message(chat_id=callback.message.chat.id, text=f"Триплет {triplet} не найден. Напиши /start для сброса.")
@@ -261,10 +258,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str)
 async def main():
     os.makedirs("images/amino", exist_ok=True)
     logging.basicConfig(level=logging.INFO)
-    
-    # СБРАСЫВАЕМ ЗАСТРЯВШИЕ КОМАНДЫ (ЧТОБЫ НЕ БЫЛО ПЕТЛИ ПЕРЕЗАГРУЗОК)
     await bot.delete_webhook(drop_pending_updates=True)
-    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
