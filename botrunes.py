@@ -1,97 +1,59 @@
-@dp.callback_query(Ritual.waiting_for_red, F.data.startswith("throw_"))
-async def proc_red(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    triplet = BASE_MAP[data['blue']] + BASE_MAP[data['green']] + BASE_MAP[callback.data.split("_")[1]]
-    
-    amino, runes = "Неизвестно", []
-    for name, a_data in AMINO_ACIDS.items():
-        if triplet in a_data["codons"]:
-            amino, runes = name, a_data["runes"]
-            break
-    
-    await state.update_data(current_runes=runes, current_amino=amino)
-    
-    # Удаляем старое сообщение с вопросом про красную грань, чтобы не засорять чат
-    await callback.message.delete()
-    
-    if runes:
-        # 1. Отправляем картинку и описание СРАЗУ
-        desc_text = AMINO_DESCRIPTIONS.get(amino, "Описание пока не добавлено.")
-        image_path = f"images/amino/{amino}.jpg"
-        
-        if os.path.exists(image_path):
-            photo = FSInputFile(image_path)
-            await bot.send_photo(chat_id=callback.message.chat.id, photo=photo, caption=f"🧬 **{amino}**", parse_mode="Markdown")
-        else:
-            await bot.send_message(chat_id=callback.message.chat.id, text=f"🧬 **{amino}**\n*(Картинка еще не загружена)*", parse_mode="Markdown")
+import asyncio
+import logging
+import json
+import os
+import sys
+from datetime import datetime, timedelta
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
+from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.storage.redis import RedisStorage
+from redis.asyncio import Redis
 
-        await bot.send_message(chat_id=callback.message.chat.id, text=desc_text)
+# --- НАСТРОЙКИ ---
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+DB_FILE = "users_db.json"
+MY_ID = 297967650
 
-        # 2. Если рун несколько — просим выбрать, опираясь на картинку
-        if len(runes) > 1:
-            kb_buttons = []
-            for i, r in enumerate(runes):
-                # Называем кнопки в зависимости от количества рун
-                if len(runes) == 2:
-                    label = "Левая" if i == 0 else "Правая"
-                elif len(runes) == 3:
-                    label = ["Левая", "Центральная", "Правая"][i]
-                else:
-                    label = f"Вариант {i+1}"
-                    
-                # Делаем каждую кнопку с новой строки
-                kb_buttons.append([InlineKeyboardButton(text=f"👉 {label} ({r})", callback_data=f"rune_{i}")])
-            
-            await bot.send_message(
-                chat_id=callback.message.chat.id,
-                text="👆 **Посмотри на картинку выше.**\nЭтой аминокислоте соответствует несколько рун. Сделай свой интуитивный выбор:",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons)
-            )
-            await state.set_state(Ritual.waiting_for_rune_choice)
-        else:
-            # Если руна всего одна — сохраняем автоматически
-            await save_rune_and_continue(callback.message, state, runes[0])
-    else:
-        await bot.send_message(chat_id=callback.message.chat.id, text=f"Триплет {triplet} не найден. Напиши /start для сброса.")
-        
-    await callback.answer()
+# --- REDIS STORAGE ---
+redis = Redis(host='localhost')
+storage = RedisStorage(redis=redis)
 
-@dp.callback_query(Ritual.waiting_for_rune_choice, F.data.startswith("rune_"))
-async def proc_rune(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    
-    # Убираем кнопки выбора после того, как человек нажал на одну из них
-    await callback.message.delete() 
-    
-    await save_rune_and_continue(callback.message, state, data['current_runes'][int(callback.data.split("_")[1])])
-    await callback.answer()
+# --- БАЗА КОДОНОВ И РУН ---
+BASE_MAP = {"1": "А", "2": "Ц", "3": "У", "4": "Г"}
+AMINO_ACIDS = {
+    "Аргинин": {"codons": ["ЦГЦ", "ЦГУ", "ЦГА", "ЦГГ", "АГА", "АГГ"], "runes": ["Ч", "Y"]},
+    "Аланин": {"codons": ["ГЦУ", "ГЦГ", "ГЦЦ", "ГЦА"], "runes": [")", "¥", "𐰉", "𐰈"]},
+    "Аспарагин": {"codons": ["ААУ", "ААЦ"], "runes": ["ʎ"]},
+    "Аспарагиновая к-та": {"codons": ["ГАУ", "ГАЦ"], "runes": ["*", "1"]},
+    "Валин": {"codons": ["ГУУ", "ГУЦ", "ГУА", "ГУГ"], "runes": ["𐰓", "9", "ς"]},
+    "Глютамин": {"codons": ["ЦАА", "ЦАГ"], "runes": ["Λ", "П"]},
+    "Глютаминовая к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
+    "Гистидин": {"codons": ["ЦАУ", "ЦАЦ"], "runes": ["𐰓"]},
+    "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺", "D", "❂"]},
+    "Стоп-кодон": {"codons": ["УАА"], "runes": ["33"]},
+    "Изолейцин": {"codons": ["АУУ", "АУЦ", "АУА"], "runes": ["I|", "Є"]},
+    "Лейцин": {"codons": ["УУА", "УУГ", "ЦУУ", "ЦУЦ", "ЦУА", "ЦУГ"], "runes": ["Y", "J"]},
+    "Лизин": {"codons": ["ААА", "ААГ"], "runes": ["↑"]},
+    "Пирролизин": {"codons": ["УАГ"], "runes": ["ᛟ"]},
+    "Метионин": {"codons": ["АУГ"], "runes": ["Г"]},
+    "Пролин": {"codons": ["ЦЦУ", "ЦЦГ", "ЦЦЦ", "ЦЦА"], "runes": ["ᛉ"]},
+    "Серин": {"codons": ["УЦУ", "УЦГ", "УЦЦ", "УЦА", "АГУ", "АГЦ"], "runes": ["D", "☺"]},
+    "Триптофан": {"codons": ["УГГ"], "runes": ["⌂"]},
+    "Тирозин": {"codons": ["УАУ", "УАЦ"], "runes": ["ᛒ", "ᛃ"]},
+    "Треонин": {"codons": ["АЦУ", "АЦГ", "АЦЦ", "АЦА"], "runes": ["ㅋ", "N", "◁", "F"]},
+    "Фенилаланин": {"codons": ["УУУ", "УУЦ"], "runes": ["X", "|"]},
+    "Цистеин": {"codons": ["УГУ", "УГЦ"], "runes": ["︽", "h"]},
+    "Селеноцистеин": {"codons": ["УГА"], "runes": ["M"]}
+}
 
-async def save_rune_and_continue(message: Message, state: FSMContext, rune: str):
-    data = await state.get_data()
-    runes = data['final_runes'] + [rune]
-    complex_num = data['complex_num']
+# --- БАЗА ОПИСАНИЙ АМИНОКИСЛОТ ---
+AMINO_DESCRIPTIONS = {
+    "Аспарагиновая к-та": """Аспарагиновая кислота — играет важную роль в синтезе аммиака, повышает сопротивляемость усталости, участвует в преобразовании углеводов в мышечную энергию. За счет повышения продукции иммуноглобулинов и антител стимулирует иммунитет. Также аспарагиновая кислота необходима для поддержания баланса в процессах, происходящих в центральной нервной системе; препятствует как чрезмерному возбуждению, так и излишнему торможению.""",
     
-    # Переход на следующий комплекс или финал
-    if complex_num < 3:
-        await state.update_data(complex_num=complex_num + 1, final_runes=runes)
-        await bot.send_message(
-            chat_id=message.chat.id, 
-            text=f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** Брось палочки и посмотри на **СИНЮЮ** грань:", 
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=str(i), callback_data=f"throw_{i}") for i in range(1, 5)]]), 
-            parse_mode="Markdown"
-        )
-        await state.set_state(Ritual.waiting_for_blue)
-    else:
-        await bot.send_message(
-            chat_id=message.chat.id, 
-            text=f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада рун: **{' | '.join(runes)}**\n\nНанеси эти руны на нижнюю часть волчка справа налево и закрути его на мандале 3 раза.", 
-            parse_mode="Markdown"
-        )
-        
-        # Устанавливаем таймер на 12 часов
-        db = load_db()
-        db[str(message.chat.id)] = (datetime.now() + timedelta(hours=12)).isoformat()
-        save_db(db)
-        
-        await state.clear()
+    "Валин": """Валин - незаменимая аминокислота, оказывающая стимулирующее действие, одна из аминокислот ВСАА, поэтому может быть использована мышцами в качестве источника энергии. Валин необходим для метаболизма в мышцах, восстановления поврежденных тканей и для поддержания нормального обмена азота в организме. Валин часто используют для коррекции выраженных дефицитов аминокислот, в результате привыкания к лекарствам. Его чрезмерно высокий уровень в организме может привести к таким симптомам, как парестезии (ощущение мурашек на коже), вплоть до галлюцинаций. Прием валина в виде пищевых добавок следует сбалансировать приемом других разветвленных аминокислот ВСАА - L-лейцина и L-изолейцина.""",
+    
+    "Глютамин": """Глютамин - это аминокислота, наиболее часто встречающаяся в мышцах в свободном виде. Он очень легко проникает через гематоэнцефалический барьер и в клетках головного мозга переходит в глютаминовую кислоту и обратно, кроме того увеличивает количество гамма-аминомасляной кислоты, которая необходима для поддержания нормальной работы головного мозга. Эта аминокислота также поддерживает нормальное кислотно-щелочное равновесие в организме и здоровое состояние желудочно-кишечного тракта, необходим для синтеза ДНК и РНК.
+Глютамин - активный участник азотного обмена. Его молекула содержит два атома азота и образуется из глютаминовой кислоты путем присоединения одного атома азота. Синтез глютамина помогает удалить избыток ам
