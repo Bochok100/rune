@@ -207,7 +207,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         aminos_joined = ",".join(aminos)
         aminos_encoded = urllib.parse.quote(aminos_joined)
         
-        web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}"
+        web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(datetime.now().timestamp())}"
         
         kb_final = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📖 Открыть расшифровку", web_app=WebAppInfo(url=web_app_url))]
