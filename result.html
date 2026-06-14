@@ -1,80 +1,250 @@
-<!DOCTYPE html>
-<html lang="ru">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Расшифровка Обряда</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <style>
-        /* Стили подстраиваются под темную/светлую тему пользователя в Телеграме */
-        body {
-            font-family: sans-serif;
-            padding: 20px;
-            background-color: var(--tg-theme-bg-color, #ffffff);
-            color: var(--tg-theme-text-color, #000000);
-            line-height: 1.5;
-        }
-        h1 {
-            text-align: center;
-            font-size: 22px;
-            color: var(--tg-theme-text-color, #000000);
-        }
-        .card {
-            background-color: var(--tg-theme-secondary-bg-color, #f0f0f0);
-            padding: 15px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        }
-        .card h2 {
-            margin-top: 0;
-            color: var(--tg-theme-button-color, #2481cc);
-            font-size: 18px;
-        }
-    </style>
-</head>
-<body>
+import asyncio
+import logging
+import json
+import os
+import sys
+import urllib.parse
+from datetime import datetime, timedelta
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, InputMediaPhoto
+from aiogram.types.web_app_info import WebAppInfo
+from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.storage.redis import RedisStorage
+from redis.asyncio import Redis
 
-    <h1>Твоя расшифровка</h1>
-    <div id="content">Загрузка...</div>
+# --- НАСТРОЙКИ ---
+BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
+DB_FILE = "users_db.json"
+MY_ID = 297967650
 
-    <script>
-        // Сообщаем Телеграму, что приложение готово
-        window.Telegram.WebApp.ready();
-        window.Telegram.WebApp.expand(); // Разворачиваем на весь экран
+# --- REDIS STORAGE ---
+redis = Redis(host='localhost')
+storage = RedisStorage(redis=redis)
 
-        // База описаний (Тут можешь вставить свои полные тексты)
-        const descriptions = {
-            "Аланин": "Аланин — важный источник энергии для мышечных тканей, головного мозга и центральной нервной системы. Укрепляет иммунную систему.",
-            "Аргинин": "Аргинин — условно-незаменимая аминокислота. Играет важную роль в делении клеток, восстановлении после травм, выведении шлаков.",
-            "Аспарагин": "Аспарагин — аминокислота, необходимая для поддержания баланса в процессах, происходящих в центральной нервной системе.",
-            "Стоп-кодон": "Стоп-кодон — это сигнал остановки и фиксации. В контексте обряда означает завершение определенного этапа.",
-            // ВСТАВЬ СЮДА ОСТАЛЬНЫЕ ОПИСАНИЯ ПО АНАЛОГИИ
-            "Валин": "Валин - незаменимая аминокислота, оказывающая стимулирующее действие, одна из аминокислот ВСАА...",
-            "Глютамин": "Глютамин - это аминокислота, наиболее часто встречающаяся в мышцах в свободном виде..."
-        };
+# --- БАЗА КОДОНОВ И РУН ---
+BASE_MAP = {"1": "А", "2": "Ц", "3": "У", "4": "Г"}
+AMINO_ACIDS = {
+    "Аргинин": {"codons": ["ЦГЦ", "ЦГУ", "ЦГА", "ЦГГ", "АГА", "АГГ"], "runes": ["Ч", "Y"]},
+    "Аланин": {"codons": ["ГЦУ", "ГЦГ", "ГЦЦ", "ГЦА"], "runes": [")", "¥", "𐰉", "𐰈"]},
+    "Аспарагин": {"codons": ["ААУ", "ААЦ"], "runes": ["ʎ"]},
+    "Аспарагиновая к-та": {"codons": ["ГАУ", "ГАЦ"], "runes": ["*", "1"]},
+    "Валин": {"codons": ["ГУУ", "ГУЦ", "ГУА", "ГУГ"], "runes": ["𐰓", "9", "ς"]},
+    "Глютамин": {"codons": ["ЦАА", "ЦАГ"], "runes": ["Λ", "П"]},
+    "Глютаминовая к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
+    "Гистидин": {"codons": ["ЦАУ", "ЦАЦ"], "runes": ["𐰓"]},
+    "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺", "D", "❂"]},
+    "Стоп-кодон": {"codons": ["УАА"], "runes": ["33"]},
+    "Изолейцин": {"codons": ["АУУ", "АУЦ", "АУА"], "runes": ["I|", "Є"]},
+    "Лейцин": {"codons": ["УУА", "УУГ", "ЦУУ", "ЦУЦ", "ЦУА", "ЦУГ"], "runes": ["Y", "J"]},
+    "Лизин": {"codons": ["ААА", "ААГ"], "runes": ["↑"]},
+    "Пирролизин": {"codons": ["УАГ"], "runes": ["ᛟ"]},
+    "Метионин": {"codons": ["АУГ"], "runes": ["Г"]},
+    "Пролин": {"codons": ["ЦЦУ", "ЦЦГ", "ЦЦЦ", "ЦЦА"], "runes": ["ᛉ"]},
+    "Серин": {"codons": ["УЦУ", "УЦГ", "УЦЦ", "УЦА", "АГУ", "АГЦ"], "runes": ["D", "☺"]},
+    "Триптофан": {"codons": ["УГГ"], "runes": ["⌂"]},
+    "Тирозин": {"codons": ["УАУ", "УАЦ"], "runes": ["ᛒ", "ᛃ"]},
+    "Треонин": {"codons": ["АЦУ", "АЦГ", "АЦЦ", "АЦА"], "runes": ["ㅋ", "N", "◁", "F"]},
+    "Фенилаланин": {"codons": ["УУУ", "УУЦ"], "runes": ["X", "|"]},
+    "Цистеин": {"codons": ["УГУ", "УГЦ"], "runes": ["︽", "h"]},
+    "Селеноцистеин": {"codons": ["УГА"], "runes": ["M"]}
+}
 
-        // Читаем данные из ссылки (URL), которые передаст бот
-        const params = new URLSearchParams(window.location.search);
-        const aminosParam = params.get('aminos');
-        const aminos = aminosParam ? aminosParam.split(',') : [];
+# --- СОСТОЯНИЯ ---
+class Ritual(StatesGroup):
+    waiting_for_blue = State()
+    waiting_for_green = State()
+    waiting_for_red = State()
+    waiting_for_rune_choice = State()
 
-        let html = '';
-        if(aminos.length > 0) {
-            aminos.forEach((amino, index) => {
-                let desc = descriptions[amino] || "Описание пока не добавлено.";
-                html += `
-                    <div class="card">
-                        <h2>${index + 1}. ${amino}</h2>
-                        <p>${desc}</p>
-                    </div>
-                `;
-            });
-        } else {
-            html = "<p>Данные для расшифровки не найдены.</p>";
-        }
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(storage=storage)
 
-        document.getElementById('content').innerHTML = html;
-    </script>
-</body>
-</html>
+def load_db():
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, "r") as f: return json.load(f)
+    return {}
+
+def save_db(data):
+    with open(DB_FILE, "w") as f: json.dump(data, f)
+
+# --- АДМИН-КОМАНДЫ ---
+@dp.message(F.text == "/restart")
+async def restart_bot(message: Message):
+    if message.from_user.id == MY_ID:
+        await message.answer("🔄 Перезагружаюсь... Бот будет доступен через секунду.")
+        os._exit(0)
+
+@dp.message(F.text == "/reset")
+async def reset_timer(message: Message, state: FSMContext):
+    if message.from_user.id == MY_ID:
+        db = load_db()
+        user_id = str(message.from_user.id)
+        if user_id in db:
+            del db[user_id]
+            save_db(db)
+        await state.clear()
+        await message.answer("✅ Твой личный таймер успешно сброшен. Напиши /start")
+
+# --- ЛОГИКА РИТУАЛА ---
+@dp.message(CommandStart())
+async def cmd_start(message: Message, state: FSMContext):
+    db = load_db()
+    user_id = str(message.from_user.id)
+    if user_id in db:
+        if datetime.now() < datetime.fromisoformat(db[user_id]):
+            await message.answer("⏳ Обряд уже проведен! Следующий будет доступен через 12 часов.")
+            return
+
+    await state.clear()
+    await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
+    
+    # Кнопки с синими кружками
+    kb_blue = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
+    ])
+    
+    await message.answer("🔮 **Начинаем обряд Белой Магии Рун!**\n\nКомплекс 1. Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=kb_blue)
+    await state.set_state(Ritual.waiting_for_blue)
+
+@dp.callback_query(Ritual.waiting_for_blue, F.data.startswith("throw_"))
+async def proc_blue(callback: CallbackQuery, state: FSMContext):
+    await callback.answer() 
+    await state.update_data(blue=callback.data.split("_")[1])
+    
+    # Кнопки с зелеными кружками
+    kb_green = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🟢 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
+    ])
+    
+    await callback.message.edit_text("Теперь посмотри на **ЗЕЛЕНУЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=kb_green)
+    await state.set_state(Ritual.waiting_for_green)
+
+@dp.callback_query(Ritual.waiting_for_green, F.data.startswith("throw_"))
+async def proc_green(callback: CallbackQuery, state: FSMContext):
+    await callback.answer() 
+    await state.update_data(green=callback.data.split("_")[1])
+    
+    # Кнопки с красными кружками
+    kb_red = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🔴 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
+    ])
+    
+    await callback.message.edit_text("Теперь посмотри на **КРАСНУЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=kb_red)
+    await state.set_state(Ritual.waiting_for_red)
+
+@dp.callback_query(Ritual.waiting_for_red, F.data.startswith("throw_"))
+async def proc_red(callback: CallbackQuery, state: FSMContext):
+    await callback.answer() 
+    data = await state.get_data()
+    triplet = BASE_MAP[data['blue']] + BASE_MAP[data['green']] + BASE_MAP[callback.data.split("_")[1]]
+    
+    amino, runes = "Неизвестно", []
+    for name, a_data in AMINO_ACIDS.items():
+        if triplet in a_data["codons"]:
+            amino, runes = name, a_data["runes"]
+            break
+    
+    await state.update_data(current_runes=runes, current_amino=amino)
+    await callback.message.delete()
+    
+    if runes:
+        media_group = []
+        for i in range(len(runes)):
+            suffix = "" if i == 0 else str(i + 1)
+            image_path = f"images/amino/{amino}{suffix}.jpg"
+            if os.path.exists(image_path):
+                caption = f"🧬 **{amino}** (Руна {i+1})" if len(runes) > 1 else f"🧬 **{amino}**"
+                media_group.append(InputMediaPhoto(media=FSInputFile(image_path), caption=caption, parse_mode="Markdown"))
+        
+        if media_group:
+            await bot.send_media_group(chat_id=callback.message.chat.id, media=media_group)
+        else:
+            await bot.send_message(chat_id=callback.message.chat.id, text=f"🧬 **{amino}**\n*(Картинки еще не загружены)*", parse_mode="Markdown")
+
+        # Если рун несколько — просим выбрать (строго выбираем одну)
+        if len(runes) > 1:
+            kb_buttons = []
+            for i, r in enumerate(runes):
+                label = f"Руна {i+1}"
+                kb_buttons.append([InlineKeyboardButton(text=f"👉 {label} ({r})", callback_data=f"rune_{i}")])
+            
+            await bot.send_message(
+                chat_id=callback.message.chat.id,
+                text="👆 **Посмотри на картинки выше.**\nЭтой аминокислоте соответствует несколько рун. Сделай свой выбор:",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+            )
+            await state.set_state(Ritual.waiting_for_rune_choice)
+        else:
+            # Если руна одна, сохраняем автоматически и идем дальше
+            await save_rune_and_continue(callback.message, state, runes[0], amino)
+    else:
+        await bot.send_message(chat_id=callback.message.chat.id, text=f"Триплет {triplet} не найден. Напиши /start для сброса.")
+
+@dp.callback_query(Ritual.waiting_for_rune_choice, F.data.startswith("rune_"))
+async def proc_rune(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    await callback.message.delete() 
+    await save_rune_and_continue(callback.message, state, data['current_runes'][int(callback.data.split("_")[1])], data['current_amino'])
+
+async def save_rune_and_continue(message: Message, state: FSMContext, rune: str, amino: str):
+    data = await state.get_data()
+    runes = data.get('final_runes', []) + [rune]
+    aminos = data.get('final_aminos', []) + [amino]
+    complex_num = data.get('complex_num', 1)
+    
+    if complex_num < 3:
+        await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos)
+        
+        # Снова синие кнопки для нового комплекса
+        kb_blue = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
+        ])
+        
+        await bot.send_message(
+            chat_id=message.chat.id, 
+            text=f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** Брось палочки и посмотри на **СИНЮЮ** грань:", 
+            reply_markup=kb_blue, 
+            parse_mode="Markdown"
+        )
+        await state.set_state(Ritual.waiting_for_blue)
+    else:
+        # ОБРЯД ЗАВЕРШЕН (Все 3 комплекса пройдены)
+        
+        # Склеиваем выпавшие аминокислоты и кодируем их для безопасной передачи в Web App
+        aminos_joined = ",".join(aminos)
+        aminos_encoded = urllib.parse.quote(aminos_joined)
+        
+        # ССЫЛКА НА ТВОЙ САЙТ (ЗАМЕНИ Bochok100 если у тебя другой логин на GitHub)
+        web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}"
+        
+        # Кнопка для открытия Web App прямо внутри Telegram
+        kb_final = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📖 Открыть расшифровку", web_app=WebAppInfo(url=web_app_url))]
+        ])
+
+        final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада рун: **{' | '.join(runes)}**\n\nНанеси эти руны на нижнюю часть волчка справа налево и закрути его на мандале 3 раза.\n\nНажми на кнопку ниже, чтобы прочитать значения выпавших аминокислот:"
+
+        await bot.send_message(
+            chat_id=message.chat.id, 
+            text=final_text, 
+            parse_mode="Markdown",
+            reply_markup=kb_final
+        )
+        
+        db = load_db()
+        db[str(message.chat.id)] = (datetime.now() + timedelta(hours=12)).isoformat()
+        save_db(db)
+        await state.clear()
+
+async def main():
+    logging.basicConfig(level=logging.INFO)
+    os.makedirs("images/amino", exist_ok=True)
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
