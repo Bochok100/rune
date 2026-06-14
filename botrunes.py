@@ -226,7 +226,40 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         db[str(message.chat.id)] = (datetime.now() + timedelta(hours=12)).isoformat()
         save_db(db)
         await state.clear()
+from aiogram.types import LabeledPrice, PreCheckoutQuery
+from aiogram.filters import Command
 
+# Вставь сюда свой тестовый токен от BotFather (обязательно в кавычках)
+PAYMENT_TOKEN = "8819085536:AAHftok-TUOX9KEAQNlZOQQKvCaRyR8_D4w"
+
+# 1. Функция отправки счета (сработает при вводе команды /buy)
+@dp.message(Command("buy"))
+async def send_invoice(message: Message):
+    # Цена в копейках! 50000 = 500 рублей 00 копеек
+    price = [LabeledPrice(label="VIP-подписка (ТЕСТ)", amount=50000)]
+    
+    await bot.send_invoice(
+        chat_id=message.chat.id,
+        title="Тестовая оплата подписки",
+        description="Это проверка работы эквайринга ЮKassa. Реальные деньги списаны не будут!",
+        payload="test_invoice", # Внутренний ID платежа для бота
+        provider_token=PAYMENT_TOKEN,
+        currency="RUB",
+        prices=price,
+        start_parameter="test_buy"
+    )
+
+# 2. Проверка платежа сервером (ОБЯЗАТЕЛЬНЫЙ ШАГ)
+# Телеграм спрашивает бота: "Товар еще в наличии? Можно списывать деньги?"
+@dp.pre_checkout_query()
+async def pre_checkout_process(pre_checkout: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
+
+# 3. Действие после успешной оплаты
+@dp.message(F.successful_payment)
+async def successful_payment(message: Message):
+    # Тут бот может выдать ссылку на приватный канал или начислить руны
+    await message.answer(f"🎉 Ура! Тестовая оплата на сумму {message.successful_payment.total_amount // 100} руб. прошла успешно!\n\nСистема работает идеально.")
 async def main():
     logging.basicConfig(level=logging.INFO)
     os.makedirs("images/amino", exist_ok=True)
