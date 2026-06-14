@@ -5,10 +5,12 @@ import os
 import sys
 import urllib.parse
 from datetime import datetime, timedelta
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, InputMediaPhoto
+from aiogram.types import LabeledPrice, PreCheckoutQuery
 from aiogram.types.web_app_info import WebAppInfo
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.redis import RedisStorage
@@ -18,6 +20,9 @@ from redis.asyncio import Redis
 BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
 DB_FILE = "users_db.json"
 MY_ID = 297967650
+
+# ВСТАВЬ СЮДА ПРАВИЛЬНЫЙ ТОКЕН (Он должен содержать слово :TEST: внутри)
+PAYMENT_TOKEN = "ТВОЙ_ТОКЕН_СО_СЛОВОМ_TEST"
 
 # --- REDIS STORAGE ---
 redis = Redis(host='localhost')
@@ -226,15 +231,19 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         db[str(message.chat.id)] = (datetime.now() + timedelta(hours=12)).isoformat()
         save_db(db)
         await state.clear()
-from aiogram.types import LabeledPrice, PreCheckoutQuery
-from aiogram.filters import Command
 
-# Вставь сюда свой тестовый токен от BotFather (обязательно в кавычках)
-PAYMENT_TOKEN = "8819085536:AAHftok-TUOX9KEAQNlZOQQKvCaRyR8_D4w"
 
-# 1. Функция отправки счета (сработает при вводе команды /buy)
+# ==========================================
+# БЛОК ОПЛАТЫ (ТЕСТ)
+# ==========================================
+
 @dp.message(Command("buy"))
 async def send_invoice(message: Message):
+    # Если токен не заменен, бот выдаст понятное предупреждение
+    if "СЛОВОМ_TEST" in PAYMENT_TOKEN:
+        await message.answer("⚠️ Ошибка: Ты забыл вставить тестовый токен от ЮKassa в код бота (переменная PAYMENT_TOKEN).")
+        return
+
     # Цена в копейках! 50000 = 500 рублей 00 копеек
     price = [LabeledPrice(label="VIP-подписка (ТЕСТ)", amount=50000)]
     
@@ -249,17 +258,18 @@ async def send_invoice(message: Message):
         start_parameter="test_buy"
     )
 
-# 2. Проверка платежа сервером (ОБЯЗАТЕЛЬНЫЙ ШАГ)
-# Телеграм спрашивает бота: "Товар еще в наличии? Можно списывать деньги?"
 @dp.pre_checkout_query()
 async def pre_checkout_process(pre_checkout: PreCheckoutQuery):
     await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
 
-# 3. Действие после успешной оплаты
 @dp.message(F.successful_payment)
 async def successful_payment(message: Message):
-    # Тут бот может выдать ссылку на приватный канал или начислить руны
     await message.answer(f"🎉 Ура! Тестовая оплата на сумму {message.successful_payment.total_amount // 100} руб. прошла успешно!\n\nСистема работает идеально.")
+
+# ==========================================
+# ЗАПУСК БОТА
+# ==========================================
+
 async def main():
     logging.basicConfig(level=logging.INFO)
     os.makedirs("images/amino", exist_ok=True)
