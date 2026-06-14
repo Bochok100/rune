@@ -135,23 +135,40 @@ async def cmd_start(message: Message, state: FSMContext):
             return
 
     await state.clear()
-    # Теперь мы сохраняем не только руны, но и названия аминокислот
     await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
-    await message.answer("🔮 **Начинаем обряд Белой Магии Рун!**\n\nКомплекс 1. Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=str(i), callback_data=f"throw_{i}") for i in range(1, 5)]]))
+    
+    # Кнопки с синими кружками
+    kb_blue = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
+    ])
+    
+    await message.answer("🔮 **Начинаем обряд Белой Магии Рун!**\n\nКомплекс 1. Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=kb_blue)
     await state.set_state(Ritual.waiting_for_blue)
 
 @dp.callback_query(Ritual.waiting_for_blue, F.data.startswith("throw_"))
 async def proc_blue(callback: CallbackQuery, state: FSMContext):
     await callback.answer() 
     await state.update_data(blue=callback.data.split("_")[1])
-    await callback.message.edit_text("Теперь посмотри на **ЗЕЛЕНУЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=str(i), callback_data=f"throw_{i}") for i in range(1, 5)]]))
+    
+    # Кнопки с зелеными кружками
+    kb_green = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🟢 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
+    ])
+    
+    await callback.message.edit_text("Теперь посмотри на **ЗЕЛЕНУЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=kb_green)
     await state.set_state(Ritual.waiting_for_green)
 
 @dp.callback_query(Ritual.waiting_for_green, F.data.startswith("throw_"))
 async def proc_green(callback: CallbackQuery, state: FSMContext):
     await callback.answer() 
     await state.update_data(green=callback.data.split("_")[1])
-    await callback.message.edit_text("Теперь посмотри на **КРАСНУЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=str(i), callback_data=f"throw_{i}") for i in range(1, 5)]]))
+    
+    # Кнопки с красными кружками
+    kb_red = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🔴 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
+    ])
+    
+    await callback.message.edit_text("Теперь посмотри на **КРАСНУЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=kb_red)
     await state.set_state(Ritual.waiting_for_red)
 
 @dp.callback_query(Ritual.waiting_for_red, F.data.startswith("throw_"))
@@ -183,8 +200,7 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
         else:
             await bot.send_message(chat_id=callback.message.chat.id, text=f"🧬 **{amino}**\n*(Картинки еще не загружены)*", parse_mode="Markdown")
 
-        # ОПИСАНИЕ УБРАНО ОТСЮДА! Оно будет в самом конце.
-
+        # Если рун несколько — просим выбрать (БЕЗ текста описания, только кнопки)
         if len(runes) > 1:
             kb_buttons = []
             for i, r in enumerate(runes):
@@ -199,7 +215,6 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
             )
             await state.set_state(Ritual.waiting_for_rune_choice)
         else:
-            # Передаем аминокислоту для сохранения
             await save_rune_and_continue(callback.message, state, runes[0], amino)
     else:
         await bot.send_message(chat_id=callback.message.chat.id, text=f"Триплет {triplet} не найден. Напиши /start для сброса.")
@@ -209,26 +224,31 @@ async def proc_rune(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
     await callback.message.delete() 
-    # Передаем аминокислоту для сохранения
     await save_rune_and_continue(callback.message, state, data['current_runes'][int(callback.data.split("_")[1])], data['current_amino'])
 
 async def save_rune_and_continue(message: Message, state: FSMContext, rune: str, amino: str):
     data = await state.get_data()
     runes = data.get('final_runes', []) + [rune]
-    aminos = data.get('final_aminos', []) + [amino] # Сохраняем аминокислоту
+    aminos = data.get('final_aminos', []) + [amino]
     complex_num = data.get('complex_num', 1)
     
     if complex_num < 3:
         await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos)
+        
+        # Снова синие кнопки для нового комплекса
+        kb_blue = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
+        ])
+        
         await bot.send_message(
             chat_id=message.chat.id, 
             text=f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** Брось палочки и посмотри на **СИНЮЮ** грань:", 
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=str(i), callback_data=f"throw_{i}") for i in range(1, 5)]]), 
+            reply_markup=kb_blue, 
             parse_mode="Markdown"
         )
         await state.set_state(Ritual.waiting_for_blue)
     else:
-        # КОГДА ОБРЯД ЗАВЕРШЕН, ВЫДАЕМ ФИНАЛЬНЫЙ ТЕКСТ СО ВСЕМИ ОПИСАНИЯМИ
+        # ОБРЯД ЗАВЕРШЕН — ВЫДАЕМ ФИНАЛЬНЫЙ ТЕКСТ СО ВСЕМИ ОПИСАНИЯМИ
         final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада рун: **{' | '.join(runes)}**\n\nНанеси эти руны на нижнюю часть волчка справа налево и закрути его на мандале 3 раза.\n\n"
         final_text += "🧬 **Значения выпавших аминокислот:**\n\n"
         
@@ -253,7 +273,6 @@ async def main():
     
     print("DEBUG: Удаляю вебхук и запускаю бота...")
     await bot.delete_webhook(drop_pending_updates=True)
-    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
