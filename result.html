@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Расшифровка Обряда</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        /* Стили подстраиваются под темную/светлую тему пользователя в Телеграме */
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+            background-color: var(--tg-theme-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #000000);
+            line-height: 1.5;
+        }
+        h1 {
+            text-align: center;
+            font-size: 22px;
+            color: var(--tg-theme-text-color, #000000);
+        }
+        .card {
+            background-color: var(--tg-theme-secondary-bg-color, #f0f0f0);
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .card h2 {
+            margin-top: 0;
+            color: var(--tg-theme-button-color, #2481cc);
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Твоя расшифровка</h1>
+    <div id="content">Загрузка...</div>
+
+    <script>
+        // Сообщаем Телеграму, что приложение готово
+        window.Telegram.WebApp.ready();
+        window.Telegram.WebApp.expand(); // Разворачиваем на весь экран
+
+        // База описаний (Тут можешь вставить свои полные тексты)
+        const descriptions = {
+            "Аланин": "Аланин — важный источник энергии для мышечных тканей, головного мозга и центральной нервной системы. Укрепляет иммунную систему.",
+            "Аргинин": "Аргинин — условно-незаменимая аминокислота. Играет важную роль в делении клеток, восстановлении после травм, выведении шлаков.",
+            "Аспарагин": "Аспарагин — аминокислота, необходимая для поддержания баланса в процессах, происходящих в центральной нервной системе.",
+            "Стоп-кодон": "Стоп-кодон — это сигнал остановки и фиксации. В контексте обряда означает завершение определенного этапа.",
+            // ВСТАВЬ СЮДА ОСТАЛЬНЫЕ ОПИСАНИЯ ПО АНАЛОГИИ
+            "Валин": "Валин - незаменимая аминокислота, оказывающая стимулирующее действие, одна из аминокислот ВСАА...",
+            "Глютамин": "Глютамин - это аминокислота, наиболее часто встречающаяся в мышцах в свободном виде..."
+        };
+
+        // Читаем данные из ссылки (URL), которые передаст бот
+        const params = new URLSearchParams(window.location.search);
+        const aminosParam = params.get('aminos');
+        const aminos = aminosParam ? aminosParam.split(',') : [];
+
+        let html = '';
+        if(aminos.length > 0) {
+            aminos.forEach((amino, index) => {
+                let desc = descriptions[amino] || "Описание пока не добавлено.";
+                html += `
+                    <div class="card">
+                        <h2>${index + 1}. ${amino}</h2>
+                        <p>${desc}</p>
+                    </div>
+                `;
+            });
+        } else {
+            html = "<p>Данные для расшифровки не найдены.</p>";
+        }
+
+        document.getElementById('content').innerHTML = html;
+    </script>
+</body>
+</html>
