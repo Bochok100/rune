@@ -26,7 +26,7 @@ storage = RedisStorage(redis=redis)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
-# --- БАЗА КОДОНОВ ---
+# --- БАЗА КОДОНОВ И РУН ---
 BASE_MAP = {"1": "А", "2": "Ц", "3": "У", "4": "Г"}
 AMINO_ACIDS = {
     "Аргинин": {"codons": ["ЦГЦ", "ЦГУ", "ЦГА", "ЦГГ", "АГА", "АГГ"], "runes": ["Ч", "Y"]},
@@ -69,6 +69,28 @@ def load_db():
 def save_db(data):
     with open(DB_FILE, "w") as f: json.dump(data, f)
 
+# --- ГЛАВНОЕ МЕНЮ И ТЕКСТЫ ---
+def get_main_menu_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📖 Об авторе", callback_data="info_author")],
+        [InlineKeyboardButton(text="📜 История метода", callback_data="info_method")],
+        [InlineKeyboardButton(text="🌬️ Буор, Ийэ и Салгын Кут", callback_data="info_kut")],
+        [InlineKeyboardButton(text="🕯 Как подготовиться?", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/prep.html"))],
+        [InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]
+    ])
+
+def get_greeting_text(user_data, now):
+    trial_end = datetime.fromisoformat(user_data.get("trial_end", now.isoformat()))
+    days_left = (trial_end - now).days
+    
+    greeting = "Приветствую! Выберите нужный раздел меню или начните обряд:\n\n"
+    if not user_data.get("paid", False):
+        if now < trial_end:
+            greeting += f"🎁 **У вас активно 3 дня БЕСПЛАТНОГО пользования!**\n*(Осталось дней: {max(0, days_left)})*\n\n"
+        else:
+            greeting += "⚠️ **Ваш 3-дневный бесплатный период окончен.**\nПройдите обряд, чтобы оплатить доступ к результатам и попасть в VIP-клуб.\n\n"
+    return greeting
+
 # --- ФОНОВЫЙ ПЛАНИРОВЩИК УВЕДОМЛЕНИЙ ---
 async def daily_notifier():
     while True:
@@ -104,7 +126,7 @@ async def daily_notifier():
             save_db(db)
         await asyncio.sleep(3600) # Проверяем каждый час
 
-# --- КОМАНДЫ И ОБРЯД ---
+# --- КОМАНДЫ ---
 @dp.message(F.text == "/reset")
 async def reset_timer(message: Message, state: FSMContext):
     if message.from_user.id == MY_ID:
@@ -125,39 +147,82 @@ async def cmd_start(message: Message, state: FSMContext):
     if user_id not in db or isinstance(db[user_id], str):
         db[user_id] = {
             "trial_end": (now + timedelta(days=3)).isoformat(),
-            "next_ritual_time": now.isoformat(),
+            "next_ritual_time": now.isoformat(), # Готов к обряду прямо сейчас
             "notified": 0,
             "paid": False
         }
         save_db(db)
 
-    user_data = db[user_id]
-    next_ritual = datetime.fromisoformat(user_data["next_ritual_time"])
-    
-    if now < next_ritual:
-        await message.answer("⏳ Обряд уже проведен! Следующий будет доступен через 12 часов.")
-        return
-
-    trial_end = datetime.fromisoformat(user_data["trial_end"])
-    days_left = (trial_end - now).days
-    
-    greeting = "Приветствую! Вы готовы начать обряд Белой Магии Рун?\n\n"
-    
-    if not user_data.get("paid", False):
-        if now < trial_end:
-            greeting += f"🎁 **У вас активно 3 дня БЕСПЛАТНОГО пользования!**\n*(Осталось дней: {max(0, days_left)})*\n\n"
-        else:
-            greeting += "⚠️ **Ваш 3-дневный бесплатный период окончен.**\nПройдите обряд, чтобы оплатить доступ к результатам и попасть в VIP-клуб.\n\n"
-
     await state.clear()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📖 Как подготовиться?", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/prep.html"))],
-        [InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]
-    ])
-    await message.answer(greeting, reply_markup=kb, parse_mode="Markdown")
+    greeting = get_greeting_text(db[user_id], now)
+    await message.answer(greeting, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
 
+# --- ИНФОРМАЦИОННЫЕ РАЗДЕЛЫ ---
+@dp.callback_query(F.data == "back_main")
+async def back_main_handler(callback: CallbackQuery, state: FSMContext):
+    db = load_db()
+    user_id = str(callback.from_user.id)
+    now = datetime.now()
+    greeting = get_greeting_text(db.get(user_id, {}), now)
+    await callback.message.edit_text(greeting, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
+
+@dp.callback_query(F.data == "info_author")
+async def info_author(callback: CallbackQuery):
+    text = (
+        "📖 **Об авторе метода**\n\n"
+        "Метод, используемый в данном боте, основан на работах Андрея Ивановича Кривошапкина (Айыңа).\n\n"
+        "Айыңа посвятил многие годы изучению древнетюркской гадательной книги «Ирк Битиг», рунических знаков и их интерпретации. "
+        "На основе собственных исследований он разработал авторскую систему работы с комбинациями рун, четырёхгранными палочками и связанными с ними символическими значениями.\n\n"
+        "При жизни Айыңа передавал свои знания ученикам и стремился сделать метод доступным для людей, интересующихся традиционной культурой и духовным наследием народа саха.\n\n"
+        "После ухода автора его ученики продолжают изучать, сохранять и распространять полученные знания.\n\n"
+        "Данный бот создан как цифровой инструмент для знакомства с методом Айыңа и сохранения его наследия для будущих поколений."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")]])
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+
+@dp.callback_query(F.data == "info_method")
+async def info_method(callback: CallbackQuery):
+    text = (
+        "📜 **История и суть метода**\n\n"
+        "Данный метод направлен на работу с **Салгын Кут** — воздушной составляющей человека.\n\n"
+        "Согласно традиции, гармонизация Салгын Кут помогает человеку лучше воспринимать информацию, осознавать внутренние процессы и восстанавливать внутреннее равновесие.\n\n"
+        "Практика основана на работах Андрея Ивановича Кривошапкина (Айыҥа), исследователя, рунолога и автора метода."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")]])
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+
+@dp.callback_query(F.data == "info_kut")
+async def info_kut(callback: CallbackQuery):
+    text = (
+        "🌬️ **Три составляющие человека в традиции саха**\n\n"
+        "Согласно традиционным представлениям народа саха, человек состоит не только из физического тела. Его сущность образуют три взаимосвязанные составляющие — три Кут.\n\n"
+        "🌱 **Буор Кут (земляная составляющая)**\n"
+        "Связан с физическим телом человека, его здоровьем, жизненной силой и связью с земным миром. Это основа материального существования человека, его телесная оболочка. Традиционно связывают с Нижним миром.\n\n"
+        "🤱 **Ийэ Кут (материнская составляющая)**\n"
+        "Человек получает её от родителей при рождении. Она связана с наследственностью, родовой памятью, происхождением и продолжением рода. В современной интерпретации её можно сравнить с генетической информацией (ДНК). Традиционно связывают со Срединным миром.\n\n"
+        "🌬 **Салгын Кут (воздушная составляющая)**\n"
+        "Связан с сознанием человека, его интеллектом, мыслями, вдохновением, внутренним восприятием и духовным развитием. Именно через Салгын Кут человек взаимодействует с миром идей, знаний и высших смыслов. Традиционно связывают с Верхним миром."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")]])
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+
+# --- ЛОГИКА ОБРЯДА ---
 @dp.callback_query(F.data == "start_ritual")
 async def start_ritual_handler(callback: CallbackQuery, state: FSMContext):
+    db = load_db()
+    user_id = str(callback.from_user.id)
+    user_data = db.get(user_id, {})
+    now = datetime.now()
+    next_ritual = datetime.fromisoformat(user_data.get("next_ritual_time", now.isoformat()))
+    
+    # ПРОВЕРКА ТАЙМЕРА ПРИ НАЖАТИИ КНОПКИ
+    if now < next_ritual:
+        time_left = next_ritual - now
+        hours, remainder = divmod(time_left.seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        await callback.answer(f"⏳ Обряд уже проведен! Следующий будет доступен через {hours} ч. {minutes} мин.", show_alert=True)
+        return
+
     await callback.answer()
     await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
