@@ -17,7 +17,7 @@ from redis.asyncio import Redis
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
-PAYMENT_TOKEN = "381764678:TEST:ВАШ_ТЕСТОВЫЙ_ТОКЕН" # <-- ВСТАВЬ СЮДА СВОЙ ТОКЕН!
+PAYMENT_TOKEN = "381764678:TEST:181793" # <-- ВСТАВЬ СЮДА СВОЙ ТОКЕН!
 DB_FILE = "users_db.json"
 MY_ID = 297967650
 
@@ -113,7 +113,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         await message.answer("🎉 Обряд завершен! Оплатите для получения результата:")
         price = [LabeledPrice(label="Расшифровка", amount=50000)]
         await bot.send_invoice(chat_id=message.chat.id, title="Результат", description="Разблокировка", 
-                               payload="unlock", provider_token=PAYMENT_TOKEN, currency="RUB", prices=price)
+                               payload="unlock", provider_token=, currency="RUB", prices=price)
 
 async def main():
     await bot.delete_webhook(drop_pending_updates=True)
