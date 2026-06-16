@@ -82,7 +82,7 @@ def get_greeting_text(user_data, now):
     time_left = trial_end - now
     days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
     
-    greeting = "Привет. Ты в системе работы с рунами и тремя Кут. Нажми «Старт», чтобы продолжить.\n\n"
+    greeting = "Привет. Ты в системе работы с рунами и тремя Кут. Нажми «🔮 Начать обряд», чтобы продолжить.\n\n"
     if not user_data.get("paid", False):
         if now < trial_end:
             greeting += f"🎁 **У вас активно {days_left} дня БЕСПЛАТНОГО пользования!**\n\n"
