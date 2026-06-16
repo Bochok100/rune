@@ -14,6 +14,7 @@
         li { margin-bottom: 8px; font-size: 14px; opacity: 0.9; }
         .main-image { width: 100%; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); margin-bottom: 15px; }
         
+        /* Стили для кнопок */
         .btn-btn { display: inline-block; width: 100%; padding: 12px; border-radius: 12px; background-color: var(--tg-theme-button-color, #5288c1); color: var(--tg-theme-button-text-color, #ffffff); border: none; font-weight: 600; font-size: 14px; cursor: pointer; margin-top: 10px; }
         .btn-secondary { background-color: transparent; border: 1px solid var(--tg-theme-button-color, #5288c1); color: var(--tg-theme-button-color, #5288c1); margin-bottom: 15px; }
         
@@ -21,6 +22,12 @@
         #schema-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 1000; justify-content: center; align-items: center; padding: 20px; box-sizing: border-box; }
         #schema-img { max-width: 100%; max-height: 90vh; border-radius: 12px; }
         .close-hint { position: absolute; bottom: 30px; color: white; opacity: 0.7; font-size: 14px; }
+
+        /* Стили формы заказа */
+        .form-group { text-align: left; margin-bottom: 12px; }
+        label { display: block; font-size: 13px; color: var(--tg-theme-hint-color, #888); margin-bottom: 4px; }
+        input, select, textarea { width: 100%; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.1); background-color: var(--tg-theme-bg-color, #1a1a1a); color: var(--tg-theme-text-color, #ffffff); box-sizing: border-box; font-size: 14px; }
+        input:focus, select:focus, textarea:focus { border-color: var(--tg-theme-button-color, #5288c1); outline: none; }
     </style>
 </head>
 <body>
@@ -40,6 +47,36 @@
         <p style="text-align: left; font-size: 14px; margin-bottom: 15px;">Для проведения обряда вам понадобятся специальные палочки разметки кодонов Айыңа.</p>
         
         <button class="btn-btn btn-secondary" onclick="openSchema()">🛠️ Как сделать палочки самому (Схема)</button>
+
+        <div style="border-top: 1px solid rgba(255,255,255,0.1); margin-top: 20px; padding-top: 10px;">
+            <h2>🛒 Заказать готовые палочки</h2>
+            <p style="text-align: left; font-size: 13px; color: var(--tg-theme-hint-color, #aaa); margin-bottom: 15px;">Заполните форму, и автор свяжется с вами для передачи инвентаря.</p>
+            
+            <div class="form-group">
+                <label>Ваше Имя и Фамилия</label>
+                <input type="text" id="fio" placeholder="Иван Иванов">
+            </div>
+            
+            <div class="form-group">
+                <label>Номер телефона</label>
+                <input type="tel" id="phone" placeholder="+7 (999) 000-00-00">
+            </div>
+            
+            <div class="form-group">
+                <label>Способ получения</label>
+                <select id="delivery" onchange="toggleAddress()">
+                    <option value="pickup">Самовывоз (Центр Якутска)</option>
+                    <option value="shipping">Доставка до адреса</option>
+                </select>
+            </div>
+            
+            <div class="form-group" id="address-block" style="display: none;">
+                <label>Адрес доставки</label>
+                <textarea id="address" rows="2" placeholder="г. Якутск, ул. Ленина, д. 1, кв. 5"></textarea>
+            </div>
+            
+            <button class="btn-btn" onclick="sendOrder()">📦 Отправить заказ в бот</button>
+        </div>
     </div>
 
     <div id="schema-modal" onclick="closeSchema()">
@@ -52,13 +89,43 @@
         tg.ready();
         tg.expand();
 
-        // ФУНКЦИИ ОТКРЫТИЯ/ЗАКРЫТИЯ СХЕМЫ БЕЗ ПЕРЕХОДА В БРАУЗЕР
+        // Функции для всплывающего окна
         function openSchema() {
             document.getElementById('schema-modal').style.display = 'flex';
         }
         
         function closeSchema() {
             document.getElementById('schema-modal').style.display = 'none';
+        }
+
+        // Функции для формы заказа
+        function toggleAddress() {
+            const delivery = document.getElementById('delivery').value;
+            document.getElementById('address-block').style.display = delivery === 'shipping' ? 'block' : 'none';
+        }
+
+        function sendOrder() {
+            const fio = document.getElementById('fio').value.trim();
+            const phone = document.getElementById('phone').value.trim();
+            const delivery = document.getElementById('delivery').value;
+            const address = document.getElementById('address').value.trim();
+
+            if (!fio || !phone) {
+                alert("Пожалуйста, заполните Имя и Номер телефона.");
+                return;
+            }
+
+            const orderData = {
+                type: "order_sticks",
+                fio: fio,
+                phone: phone,
+                delivery: delivery === 'pickup' ? "Самовывоз (Центр Якутска)" : "Доставка до адреса",
+                address: delivery === 'shipping' ? address : "-"
+            };
+
+            // Отправляем данные в Телеграм бот
+            tg.sendData(JSON.stringify(orderData));
+            tg.close();
         }
     </script>
 </body>
