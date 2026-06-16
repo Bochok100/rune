@@ -45,10 +45,9 @@
         
         <button class="btn-btn btn-secondary" onclick="openSchema()">🛠️ Как сделать палочки самому (Схема)</button>
 
-        <!-- БЛОК ЗАКАЗА С ЦЕНАМИ -->
         <div style="border-top: 1px solid rgba(255,255,255,0.1); margin-top: 20px; padding-top: 10px;">
             <h2>🛒 Заказать готовые палочки</h2>
-            <p style="text-align: left; font-size: 13px; color: var(--tg-theme-hint-color, #aaa); margin-bottom: 15px;">Заполните форму и перейдите к оплате. Мы подготовим для вас идеальный инвентарь.</p>
+            <p style="text-align: left; font-size: 13px; color: var(--tg-theme-hint-color, #aaa); margin-bottom: 15px;">Заполните форму заявки. Мы свяжемся с вами для подтверждения деталей и оплаты.</p>
             
             <div class="form-group">
                 <label>Ваше Имя и Фамилия</label>
@@ -63,8 +62,8 @@
             <div class="form-group">
                 <label>Способ получения</label>
                 <select id="delivery" onchange="toggleAddress()">
-                    <option value="pickup">Самовывоз (400 рб)</option>
-                    <option value="shipping">С доставкой по центру (600 рб)</option>
+                    <option value="pickup">Самовывоз (400 руб)</option>
+                    <option value="shipping">С доставкой по центру (600 руб)</option>
                 </select>
             </div>
             
@@ -73,11 +72,10 @@
                 <textarea id="address" rows="2" placeholder="г. Якутск, ул. Ленина, д. 1, кв. 5"></textarea>
             </div>
             
-            <button class="btn-btn" onclick="sendOrder()">💳 Заказать и перейти к оплате</button>
+            <button class="btn-btn" onclick="sendOrder()">📦 Отправить заявку</button>
         </div>
     </div>
 
-    <!-- ВСПЛЫВАЮЩАЯ СХЕМА -->
     <div id="schema-modal" onclick="closeSchema()">
         <img id="schema-img" src="schema.jpg" alt="Схема">
         <div class="close-hint">Нажмите в любом месте, чтобы закрыть</div>
@@ -112,7 +110,6 @@
                 return;
             }
 
-            // Определяем цену в зависимости от выбора
             const price = deliveryValue === 'pickup' ? 400 : 600;
             const deliveryText = deliveryValue === 'pickup' ? "Самовывоз" : "С доставкой по центру";
 
@@ -125,7 +122,7 @@
                 price: price
             };
 
-            // Отправляем данные боту для выставления счета
+            // Отправляем данные боту (без оплаты)
             tg.sendData(JSON.stringify(orderData));
             tg.close();
         }
