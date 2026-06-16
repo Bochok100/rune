@@ -34,7 +34,7 @@ AMINO_ACIDS = {
     "Аспарагиновая к-та": {"codons": ["ГАУ", "ГАЦ"], "runes": ["*", "1"]},
     "Валин": {"codons": ["ГУУ", "ГУЦ", "ГУА", "ГУГ"], "runes": ["𐰓", "9", "ς"]},
     "Глютамин": {"codons": ["ЦАА", "ЦАГ"], "runes": ["Λ", "П"]},
-    "Глютаминовой к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
+    "Глютаминовая к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
     "Гистидин": {"codons": ["ЦАУ", "ЦАЦ"], "runes": ["𐰓"]},
     "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺", "D", "❂"]},
     "Стоп-кодон": {"codons": ["УАА"], "runes": ["33"]},
@@ -82,7 +82,7 @@ def get_greeting_text(user_data, now):
     time_left = trial_end - now
     days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
     
-    greeting = "Привет. Ты в системе работы с рунами и тремя Кут. Нажми «🔮 Начать обряд», чтобы продолжить.\n\n"
+    greeting = "Привет. Ты в системе работы с рунами и тремя Кут. Нажми «Старт», чтобы продолжить.\n\n"
     if not user_data.get("paid", False):
         if now < trial_end:
             greeting += f"🎁 **У вас активно {days_left} дня БЕСПЛАТНОГО пользования!**\n\n"
@@ -90,7 +90,6 @@ def get_greeting_text(user_data, now):
             greeting += "⚠️ **Ваш 3-дневный бесплатный период окончен.**\nПройдите обряд, чтобы оплатить доступ к результатам и попасть в VIP-клуб.\n\n"
     return greeting
 
-# --- ИСПРАВЛЕННЫЙ ПЛАНИРОВЩИК (ДОБАВЛЕНО 'def') ---
 async def daily_notifier():
     while True:
         db = load_db()
@@ -119,6 +118,27 @@ async def daily_notifier():
         if changed: save_db(db)
         await asyncio.sleep(3600)
 
+# --- ОБРАБОТКА ДАННЫХ ИЗ ФОРМЫ ЗАКАЗА ПАЛОЧЕК ---
+@dp.message(F.web_app_data)
+async def web_app_data_handler(message: Message):
+    try:
+        data = json.loads(message.web_app_data.data)
+        if data.get("type") == "order_sticks":
+            order_text = (
+                "🚨 **НОВЫЙ ЗАКАЗ ЧЕТЫРЕХГРАННЫХ ПАЛОЧЕК!**\n\n"
+                 f"👤 **Покупатель:** {data['fio']}\n"
+                 f"📞 **Телефон:** {data['phone']}\n"
+                 f"🚚 **Способ:** {data['delivery']}\n"
+                 f"📍 **Адрес доставки:** {data['address']}\n\n"
+                 f"💬 *Свяжитесь с клиентом для подтверждения заказа.*"
+            )
+            # Отправляем уведомление администратору бота (тебе)
+            await bot.send_message(chat_id=MY_ID, text=order_text, parse_mode="Markdown")
+            # Отвечаем пользователю
+            await message.answer("🎉 **Заказ успешно отправлен!**\nАвтор свяжется с вами по указанному номеру телефона для уточнения деталей передачи палочек. Спасибо!")
+    except Exception as e:
+        logging.error(f"Ошибка обработки заказа формы: {e}")
+
 @dp.message(F.text == "/reset")
 async def reset_timer(message: Message, state: FSMContext):
     if message.from_user.id == MY_ID:
@@ -129,7 +149,6 @@ async def reset_timer(message: Message, state: FSMContext):
         await state.clear()
         await message.answer("✅ Твой профиль сброшен. Напиши /start для теста 3-х дней.")
 
-# --- СТАРТ С АНИМАЦИЕЙ GIF1 ---
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     db = load_db()
@@ -251,13 +270,11 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         if is_paid or now < trial_end:
             aminos_encoded = urllib.parse.quote(",".join(aminos))
             web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(now.timestamp())}"
-            # ТЕКСТ КНОПКИ ИЗМЕНЕН НА "📖 Получить результаты"
             kb_final = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))]])
-            final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада: **{' | '.join(runes)}**\nПерепишите их на полоску бумаги (справа налево)."
-            if not is_paid:
-                time_left = trial_end - now
-                days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
-                final_text += f"\n\n🎁 *У вас идет бесплатный период (осталось дней: {days_left}).*"
+            
+            # ТЕКСТ ПО ВАРИАНТУ 1 С ПРИЗЫВОМ НАЖАТЬ КНОПКУ
+            final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада: **{' | '.join(runes)}**\nПерепишите их на полоску бумаги (справа налево).\n\n🎁 У вас идет бесплатный период (осталось дней: {max(0, (trial_end - now).days)}). Чтобы расшифровать послание Салгын Кут и активировать силу рун, нажмите кнопку **ПОЛУЧИТЬ РЕЗУЛТАТЫ** ниже 👇"
+                
             await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
             user_data["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
             db[user_id] = user_data
