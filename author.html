@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Об авторе</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; background-color: var(--tg-theme-bg-color, #ffffff); color: var(--tg-theme-text-color, #000000); line-height: 1.6; }
+        .card { background-color: var(--tg-theme-secondary-bg-color, #f5f5f5); padding: 20px; border-radius: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); text-align: center; }
+        h1 { color: var(--tg-theme-button-color, #2481cc); font-size: 22px; margin-top: 15px; margin-bottom: 10px; font-weight: 700; }
+        p { text-align: left; font-size: 15px; margin-bottom: 15px; text-indent: 10px; }
+        .author-photo { width: 100%; max-width: 220px; border-radius: 16px; border: 2px solid var(--tg-theme-button-color, #2481cc); box-shadow: 0 4px 12px rgba(0,0,0,0.15); object-fit: cover; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <img src="author_photo.jpg" alt="Андрей Иванович Кривошапкин" class="author-photo">
+        
+        <h1>Андрей Иванович Кривошапкин<br><span style="font-size: 16px; font-weight: normal; color: gray;">(Айыңа)</span></h1>
+        <p>Метод, используемый в данном боте, основан на работах Андрея Ивановича Кривошапкина (Айыңа).</p>
+        <p>Айыңа посвятил многие годы изучению древнетюркской гадательной книги «Ирк Битиг», рунических знаков и их интерпретации. На основе собственных исследований он разработал авторскую систему работы с комбинациями рун, четырёхгранными палочками и связанными с ними символическими значениями.</p>
+        <p>При жизни Айыңа передавал свои знания ученикам и стремился сделать метод доступным для людей, интересующихся традиционной культурой и духовным наслевием народа саха.</p>
+        <p>После ухода автора его ученики продолжают изучать, сохранять и распространять полученные знания.</p>
+        <p style="font-style: italic; color: var(--tg-theme-hint-color, #888); text-align: center; font-size: 13px; margin-top: 20px;">Данный бот создан как цифровой инструмент для знакомства с методом Айыңа и сохранения его наследия для будущих поколений.</p>
+    </div>
+    <script>
+        window.Telegram.WebApp.ready();
+        window.Telegram.WebApp.expand();
+    </script>
+</body>
+</html>
