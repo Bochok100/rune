@@ -142,7 +142,14 @@ async def cmd_start(message: Message, state: FSMContext):
         }
         save_db(db)
     await state.clear()
-    await message.answer(get_greeting_text(db[user_id], now), reply_markup=get_main_menu_kb(), parse_mode="Markdown")
+    
+    caption = get_greeting_text(db[user_id], now)
+    
+    # Если загружена стартовая гифка, отправляем её с меню
+    if os.path.exists("gif1.mp4"):
+        await message.answer_animation(animation=FSInputFile("gif1.mp4"), caption=caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
+    else:
+        await message.answer(caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
 
 @dp.callback_query(F.data == "start_ritual")
 async def start_ritual_handler(callback: CallbackQuery, state: FSMContext):
