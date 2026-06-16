@@ -9,7 +9,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
     FSInputFile, InputMediaPhoto, LabeledPrice, PreCheckoutQuery,
-    ReplyKeyboardRemove
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 )
 from aiogram.types.web_app_info import WebAppInfo
 from aiogram.filters import CommandStart, Command
@@ -20,9 +20,9 @@ from redis.asyncio import Redis
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
-PAYMENT_TOKEN = "381764678:TEST:181793" # <-- ТВОЙ ТОКЕН ВСТАВЛЕН СЮДА!
+PAYMENT_TOKEN = "381764678:TEST:181793" # Оставляем для VIP-клуба
 DB_FILE = "users_db.json"
-MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID
+MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID ДЛЯ ЗАЯВОК
 
 redis = Redis(host='localhost')
 storage = RedisStorage(redis=redis)
@@ -76,9 +76,16 @@ def get_main_menu_kb():
         [InlineKeyboardButton(text="📖 Об авторе", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/author.html"))],
         [InlineKeyboardButton(text="📜 История метода", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/method.html"))],
         [InlineKeyboardButton(text="🌬️ Буор, Ийэ и Салгын Кут", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/kut.html"))],
-        [InlineKeyboardButton(text="🕯 Как подготовиться?", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/prep.html"))],
         [InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]
     ])
+
+def get_bottom_kb():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🕯 Подготовка и Инвентарь", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/prep.html"))]
+        ],
+        resize_keyboard=True
+    )
 
 def get_greeting_text(user_data, now):
     trial_end = datetime.fromisoformat(user_data.get("trial_end", now.isoformat()))
@@ -121,33 +128,31 @@ async def daily_notifier():
         if changed: save_db(db)
         await asyncio.sleep(3600)
 
-# --- ПРИЕМ ДАННЫХ ИЗ ФОРМЫ WEBAPP И ВЫСТАВЛЕНИЕ СЧЕТА ---
+# --- ПРИЕМ ДАННЫХ ИЗ ФОРМЫ (БЕЗ ОПЛАТЫ, ПРОСТО ЗАЯВКА В ЛС) ---
 @dp.message(F.web_app_data)
-async def web_app_data_handler(message: Message, state: FSMContext):
+async def web_app_data_handler(message: Message):
     try:
         data = json.loads(message.web_app_data.data)
         if data.get("type") == "order_sticks":
-            await state.update_data(pending_order=data)
-            price_rub = data.get("price", 400)
-            prices = [LabeledPrice(label=f"Набор палочек ({data['delivery']})", amount=price_rub * 100)] # Сумма в копейках
-            
-            await bot.send_invoice(
-                chat_id=message.chat.id,
-                title="Заказ четырехгранных палочек",
-                description=f"Оплата инвентаря для обряда.\nСпособ получения: {data['delivery']}.",
-                payload="pay_sticks", 
-                provider_token=PAYMENT_TOKEN,
-                currency="RUB",
-                prices=prices
+            order_text = (
+                "🚨 **НОВЫЙ ЗАКАЗ ЧЕТЫРЕХГРАННЫХ ПАЛОЧЕК!**\n\n"
+                f"👤 **Покупатель:** {data['fio']}\n"
+                f"📞 **Телефон:** {data['phone']}\n"
+                f"🚚 **Способ:** {data['delivery']}\n"
+                f"📍 **Адрес доставки:** {data['address']}\n"
+                f"💵 **Сумма:** {data['price']} руб.\n\n"
+                f"💬 *Свяжитесь с клиентом для подтверждения и оплаты.*"
             )
+            # Отправляем заявку тебе в ЛС
+            await bot.send_message(chat_id=MY_ID, text=order_text, parse_mode="Markdown")
+            # Отвечаем пользователю в боте
+            await message.answer("🎉 **Заявка успешно отправлена!**\nАвтор скоро свяжется с вами по указанному номеру для подтверждения заказа и оплаты. Спасибо!")
     except Exception as e:
-        logging.error(f"Ошибка обработки заказа формы: {e}")
+        logging.error(f"Ошибка обработки заказа: {e}")
 
 @dp.message(F.text == "/reset")
 async def reset_timer(message: Message, state: FSMContext):
     if message.from_user.id == MY_ID:
-        tmp = await message.answer("🔄 Обновление интерфейса...", reply_markup=ReplyKeyboardRemove())
-        await tmp.delete()
         db = load_db()
         user_id = str(message.from_user.id)
         if user_id in db: del db[user_id]
@@ -157,8 +162,6 @@ async def reset_timer(message: Message, state: FSMContext):
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
-    tmp = await message.answer("🔄", reply_markup=ReplyKeyboardRemove())
-    await tmp.delete()
     db = load_db()
     user_id = str(message.from_user.id)
     now = datetime.now()
@@ -171,12 +174,15 @@ async def cmd_start(message: Message, state: FSMContext):
         }
         save_db(db)
     await state.clear()
+    
     caption = get_greeting_text(db[user_id], now)
     
     if os.path.exists("gif1.mp4"):
         await message.answer_animation(animation=FSInputFile("gif1.mp4"), caption=caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
     else:
         await message.answer(caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
+        
+    await message.answer("👇 Для ознакомления с инвентарем или оформления заказа используйте кнопку ниже:", reply_markup=get_bottom_kb())
 
 # --- ЛОГИКА ОБРЯДА ---
 @dp.callback_query(F.data == "start_ritual")
@@ -186,16 +192,19 @@ async def start_ritual_handler(callback: CallbackQuery, state: FSMContext):
     user_data = db.get(user_id, {})
     now = datetime.now()
     next_ritual = datetime.fromisoformat(user_data.get("next_ritual_time", now.isoformat()))
+    
     if now < next_ritual:
         time_left = next_ritual - now
         hours, remainder = divmod(time_left.seconds, 3600)
         minutes, _ = divmod(remainder, 60)
         await callback.answer(f"⏳ Обряд уже проведен! Следующий будет доступен через {hours} ч. {minutes} мин.", show_alert=True)
         return
+        
     await callback.message.delete()
     await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "🔮 **Начинаем обряд.**\n\nКомплекс 1. Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
+    
     if os.path.exists("gif2.mp4"):
         await bot.send_animation(chat_id=callback.message.chat.id, animation=FSInputFile("gif2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
     else:
@@ -297,7 +306,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             await bot.send_invoice(chat_id=message.chat.id, title="Доступ к результатам", description="Оплата расшифровки рун и вступление в клуб.", payload="unlock_result", provider_token=PAYMENT_TOKEN, currency="RUB", prices=price)
             await state.set_state(Ritual.waiting_for_payment)
 
-# --- ПРОВЕРКА И ОБРАБОТКА ВСЕХ ОПЛАТ ---
+# --- ПРОВЕРКА И ОБРАБОТКА ОПЛАТ (ТОЛЬКО ДЛЯ VIP) ---
 @dp.pre_checkout_query()
 async def pre_checkout_process(pre_checkout: PreCheckoutQuery):
     await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
@@ -307,7 +316,6 @@ async def successful_payment(message: Message, state: FSMContext):
     payload = message.successful_payment.invoice_payload
     now = datetime.now()
     
-    # 1. ЕСЛИ ОПЛАТИЛИ VIP КЛУБ И РАСШИФРОВКУ
     if payload == "unlock_result":
         db = load_db()
         user_id = str(message.chat.id)
@@ -329,31 +337,6 @@ async def successful_payment(message: Message, state: FSMContext):
         final_text = f"✅ **Оплата прошла успешно! Добро пожаловать.**\n\nТвоя финальная триада: **{' | '.join(runes)}**\nПерепишите их на полоску бумаги (справа налево).\n\n👇 Нажмите на кнопку ниже, чтобы вступить в наше закрытое VIP-сообщество!"
         await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
         await state.clear()
-        
-    # 2. ЕСЛИ ОПЛАТИЛИ ПАЛОЧКИ ИЗ ФОРМЫ
-    elif payload == "pay_sticks":
-        data = await state.get_data()
-        order_data = data.get("pending_order", {})
-        
-        fio = order_data.get("fio", "Не указано")
-        phone = order_data.get("phone", "Не указано")
-        delivery = order_data.get("delivery", "Не указано")
-        address = order_data.get("address", "-")
-        
-        # Отправляем тебе чек и заявку
-        admin_text = (
-            "💰 **ОПЛАЧЕН НОВЫЙ ЗАКАЗ ПАЛОЧЕК!** 💰\n\n"
-            f"👤 **Покупатель:** {fio}\n"
-            f"📞 **Телефон:** {phone}\n"
-            f"🚚 **Способ:** {delivery}\n"
-            f"📍 **Адрес:** {address}\n\n"
-            f"💬 *Деньги получены. Свяжитесь с клиентом!*"
-        )
-        await bot.send_message(chat_id=MY_ID, text=admin_text, parse_mode="Markdown")
-        
-        # Отправляем сообщение клиенту
-        await message.answer("🎉 **Поздравляем с приобретением!**\nОплата прошла успешно. Скоро с вами свяжутся, или вы можете написать напрямую: @daayakh")
-        await state.update_data(pending_order=None)
 
 async def main():
     os.makedirs("images/amino", exist_ok=True)
