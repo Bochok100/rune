@@ -17,7 +17,7 @@ from redis.asyncio import Redis
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
-PAYMENT_TOKEN = "381764678:TEST:181793" 
+PAYMENT_TOKEN = "381764678:TEST:ВАШ_ТЕСТОВЫЙ_ТОКЕН" # <-- ВСТАВЬ СЮДА СВОЙ ТОКЕН ОТ ЮКАССЫ!
 DB_FILE = "users_db.json"
 MY_ID = 297967650
 
@@ -31,8 +31,27 @@ BASE_MAP = {"1": "А", "2": "Ц", "3": "У", "4": "Г"}
 AMINO_ACIDS = {
     "Аргинин": {"codons": ["ЦГЦ", "ЦГУ", "ЦГА", "ЦГГ", "АГА", "АГГ"], "runes": ["Ч", "Y"]},
     "Аланин": {"codons": ["ГЦУ", "ГЦГ", "ГЦЦ", "ГЦА"], "runes": [")", "¥", "𐰉", "𐰈"]},
+    "Аспарагин": {"codons": ["ААУ", "ААЦ"], "runes": ["ʎ"]},
+    "Аспарагиновая к-та": {"codons": ["ГАУ", "ГАЦ"], "runes": ["*", "1"]},
     "Валин": {"codons": ["ГУУ", "ГУЦ", "ГУА", "ГУГ"], "runes": ["𐰓", "9", "ς"]},
-    # (Остальные аминокислоты добавь сюда по аналогии с прошлыми версиями)
+    "Глютамин": {"codons": ["ЦАА", "ЦАГ"], "runes": ["Λ", "П"]},
+    "Глютаминовая к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
+    "Гистидин": {"codons": ["ЦАУ", "ЦАЦ"], "runes": ["𐰓"]},
+    "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺", "D", "❂"]},
+    "Стоп-кодон": {"codons": ["УАА"], "runes": ["33"]},
+    "Изолейцин": {"codons": ["АУУ", "АУЦ", "АУА"], "runes": ["I|", "Є"]},
+    "Лейцин": {"codons": ["УУА", "УУГ", "ЦУУ", "ЦУЦ", "ЦУА", "ЦУГ"], "runes": ["Y", "J"]},
+    "Лизин": {"codons": ["ААА", "ААГ"], "runes": ["↑"]},
+    "Пирролизин": {"codons": ["УАГ"], "runes": ["ᛟ"]},
+    "Метионин": {"codons": ["АУГ"], "runes": ["Г"]},
+    "Пролин": {"codons": ["ЦЦУ", "ЦЦГ", "ЦЦЦ", "ЦЦА"], "runes": ["ᛉ"]},
+    "Серин": {"codons": ["УЦУ", "УЦГ", "УЦЦ", "УЦА", "АГУ", "АГЦ"], "runes": ["D", "☺"]},
+    "Триптофан": {"codons": ["УГГ"], "runes": ["⌂"]},
+    "Тирозин": {"codons": ["УАУ", "УАЦ"], "runes": ["ᛒ", "ᛃ"]},
+    "Треонин": {"codons": ["АЦУ", "АЦГ", "АЦЦ", "АЦА"], "runes": ["ㅋ", "N", "◁", "F"]},
+    "Фенилаланин": {"codons": ["УУУ", "УУЦ"], "runes": ["X", "|"]},
+    "Цистеин": {"codons": ["УГУ", "УГЦ"], "runes": ["︽", "h"]},
+    "Селеноцистеин": {"codons": ["УГА"], "runes": ["M"]}
 }
 
 # --- СОСТОЯНИЯ ---
@@ -42,6 +61,137 @@ class Ritual(StatesGroup):
     waiting_for_red = State()
     waiting_for_rune_choice = State()
     waiting_for_payment = State()
+
+def load_db():
+    if os.path.exists(DB_FILE):
+        with open(DB_FILE, "r") as f: return json.load(f)
+    return {}
+
+def save_db(data):
+    with open(DB_FILE, "w") as f: json.dump(data, f)
+
+@dp.message(F.text == "/reset")
+async def reset_timer(message: Message, state: FSMContext):
+    if message.from_user.id == MY_ID:
+        db = load_db()
+        user_id = str(message.from_user.id)
+        if user_id in db:
+            del db[user_id]
+            save_db(db)
+        await state.clear()
+        await message.answer("✅ Твой личный таймер сброшен. Напиши /start")
+
+# --- СТАРТОВОЕ МЕНЮ С ПОДГОТОВКОЙ ---
+@dp.message(CommandStart())
+async def cmd_start(message: Message, state: FSMContext):
+    db = load_db()
+    user_id = str(message.from_user.id)
+    if user_id in db:
+        if datetime.now() < datetime.fromisoformat(db[user_id]):
+            await message.answer("⏳ Обряд уже проведен! Следующий будет доступен через 12 часов.")
+            return
+
+    await state.clear()
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📖 Как подготовиться?", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/prep.html"))],
+        [InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]
+    ])
+    await message.answer("Приветствую! Вы готовы начать обряд Белой Магии Рун?", reply_markup=kb)
+
+@dp.callback_query(F.data == "start_ritual")
+async def start_ritual_handler(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
+    kb_blue = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
+    ])
+    await callback.message.edit_text("🔮 **Начинаем обряд.**\n\nКомплекс 1. Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=kb_blue)
+    await state.set_state(Ritual.waiting_for_blue)
+
+# --- ЛОГИКА БРОСКОВ ---
+@dp.callback_query(Ritual.waiting_for_blue, F.data.startswith("throw_"))
+async def proc_blue(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(blue=callback.data.split("_")[1])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🟢 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
+    await callback.message.edit_text("Теперь посмотри на **ЗЕЛЕНУЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=kb)
+    await state.set_state(Ritual.waiting_for_green)
+
+@dp.callback_query(Ritual.waiting_for_green, F.data.startswith("throw_"))
+async def proc_green(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(green=callback.data.split("_")[1])
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔴 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
+    await callback.message.edit_text("Теперь посмотри на **КРАСНУЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=kb)
+    await state.set_state(Ritual.waiting_for_red)
+
+@dp.callback_query(Ritual.waiting_for_red, F.data.startswith("throw_"))
+async def proc_red(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    triplet = BASE_MAP[data['blue']] + BASE_MAP[data['green']] + BASE_MAP[callback.data.split("_")[1]]
+    amino, runes = "Неизвестно", []
+    for name, a_data in AMINO_ACIDS.items():
+        if triplet in a_data["codons"]:
+            amino, runes = name, a_data["runes"]
+            break
+    
+    await state.update_data(current_runes=runes, current_amino=amino)
+    await callback.message.delete()
+    
+    if runes:
+        media_group = []
+        for i in range(len(runes)):
+            suffix = "" if i == 0 else str(i + 1)
+            image_path = f"images/amino/{amino}{suffix}.jpg"
+            if os.path.exists(image_path):
+                caption = f"🧬 **{amino}** (Руна {i+1})" if len(runes) > 1 else f"🧬 **{amino}**"
+                media_group.append(InputMediaPhoto(media=FSInputFile(image_path), caption=caption, parse_mode="Markdown"))
+        
+        if media_group:
+            await bot.send_media_group(chat_id=callback.message.chat.id, media=media_group)
+        else:
+            await bot.send_message(chat_id=callback.message.chat.id, text=f"🧬 **{amino}**\n*(Картинки еще не загружены)*", parse_mode="Markdown")
+
+        if len(runes) > 1:
+            kb_buttons = []
+            for i, r in enumerate(runes):
+                label = f"Руна {i+1}"
+                kb_buttons.append([InlineKeyboardButton(text=f"👉 {label} ({r})", callback_data=f"rune_{i}")])
+            await bot.send_message(
+                chat_id=callback.message.chat.id,
+                text="👆 **Этой аминокислоте соответствует несколько рун. Сделай свой выбор:**",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons)
+            )
+            await state.set_state(Ritual.waiting_for_rune_choice)
+        else:
+            await save_rune_and_continue(callback.message, state, runes[0], amino)
+    else:
+        await bot.send_message(chat_id=callback.message.chat.id, text=f"Триплет {triplet} не найден.")
+
+@dp.callback_query(Ritual.waiting_for_rune_choice, F.data.startswith("rune_"))
+async def proc_rune(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await callback.message.delete() 
+    await save_rune_and_continue(callback.message, state, data['current_runes'][int(callback.data.split("_")[1])], data['current_amino'])
+
+async def save_rune_and_continue(message: Message, state: FSMContext, rune: str, amino: str):
+    data = await state.get_data()
+    runes = data.get('final_runes', []) + [rune]
+    aminos = data.get('final_aminos', []) + [amino]
+    complex_num = data.get('complex_num', 1)
+    
+    if complex_num < 3:
+        await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos)
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
+        await message.answer(f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** Брось палочки и посмотри на **СИНЮЮ** грань:", reply_markup=kb, parse_mode="Markdown")
+        await state.set_state(Ritual.waiting_for_blue)
+    else:
+        await state.update_data(final_runes=runes, final_aminos=aminos)
+        await message.answer("🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nДля получения результатов и инструкций нажмите кнопку ниже:")
+        price = [LabeledPrice(label="Расшифровка обряда", amount=50000)]
+        await bot.send_invoice(chat_id=message.chat.id, title="Разблокировать результат", description="Оплата доступа к расшифровке ваших рун.", 
+                               payload="unlock_result", provider_token=PAYMENT_TOKEN, currency="RUB", prices=price)
+        await state.set_state(Ritual.waiting_for_payment)
 
 # --- ЛОГИКА ОПЛАТЫ ---
 @dp.pre_checkout_query()
@@ -53,69 +203,25 @@ async def successful_payment(message: Message, state: FSMContext):
     data = await state.get_data()
     runes = data.get('final_runes', [])
     aminos = data.get('final_aminos', [])
+    
     aminos_encoded = urllib.parse.quote(",".join(aminos))
     web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(datetime.now().timestamp())}"
     
     kb_final = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📖 Открыть расшифровку", web_app=WebAppInfo(url=web_app_url))]
+        [InlineKeyboardButton(text="📖 Открыть инструкцию и расшифровку", web_app=WebAppInfo(url=web_app_url))]
     ])
-    await message.answer("✅ Оплата прошла успешно! Результат обряда:", reply_markup=kb_final)
-    await state.clear()
-
-# --- ЛОГИКА ОБРЯДА ---
-@dp.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
-    await state.clear()
-    await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
-    await message.answer("🔮 Начинаем обряд. Комплекс 1. Синюю грань?", reply_markup=kb)
-    await state.set_state(Ritual.waiting_for_blue)
-
-@dp.callback_query(Ritual.waiting_for_blue, F.data.startswith("throw_"))
-async def proc_blue(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(blue=callback.data.split("_")[1])
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🟢 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
-    await callback.message.edit_text("Зеленую грань?", reply_markup=kb)
-    await state.set_state(Ritual.waiting_for_green)
-
-@dp.callback_query(Ritual.waiting_for_green, F.data.startswith("throw_"))
-async def proc_green(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(green=callback.data.split("_")[1])
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔴 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
-    await callback.message.edit_text("Красную грань?", reply_markup=kb)
-    await state.set_state(Ritual.waiting_for_red)
-
-@dp.callback_query(Ritual.waiting_for_red, F.data.startswith("throw_"))
-async def proc_red(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    triplet = BASE_MAP[data['blue']] + BASE_MAP[data['green']] + BASE_MAP[callback.data.split("_")[1]]
-    amino, runes = "Неизвестно", ["-"]
-    for name, a_data in AMINO_ACIDS.items():
-        if triplet in a_data["codons"]:
-            amino, runes = name, a_data["runes"]
-            break
-    await state.update_data(current_runes=runes, current_amino=amino)
-    await save_rune_and_continue(callback.message, state, runes[0], amino)
-
-async def save_rune_and_continue(message: Message, state: FSMContext, rune: str, amino: str):
-    data = await state.get_data()
-    runes = data.get('final_runes', []) + [rune]
-    aminos = data.get('final_aminos', []) + [amino]
-    complex_num = data.get('complex_num', 1)
     
-    if complex_num < 3:
-        await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos)
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
-        await message.answer(f"✅ Выбрана: {rune}. Комплекс {complex_num + 1}. Синюю?", reply_markup=kb)
-        await state.set_state(Ritual.waiting_for_blue)
-    else:
-        await state.update_data(final_runes=runes, final_aminos=aminos)
-        await message.answer("🎉 Обряд завершен! Оплатите для получения результата:")
-        price = [LabeledPrice(label="Расшифровка", amount=50000)]
-        await bot.send_invoice(chat_id=message.chat.id, title="Результат", description="Разблокировка", 
-                               payload="unlock", provider_token=PAYMENT_TOKEN, currency="RUB", prices=price)
+    final_text = f"✅ **Оплата прошла успешно!**\n\nТвоя финальная триада рун: **{' | '.join(runes)}**\n\nПерепишите их на подготовленную полоску бумаги, соблюдая порядок (справа налево).\n\n👇 Нажмите на кнопку ниже, чтобы открыть подробную инструкцию по работе с огнем и узнать значения аминокислот:"
+    
+    await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
+    
+    db = load_db()
+    db[str(message.chat.id)] = (datetime.now() + timedelta(hours=12)).isoformat()
+    save_db(db)
+    await state.clear()
 
 async def main():
+    os.makedirs("images/amino", exist_ok=True)
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
