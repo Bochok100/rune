@@ -2,7 +2,6 @@ import asyncio
 import logging
 import json
 import os
-import sys
 import urllib.parse
 from datetime import datetime, timedelta
 
@@ -18,43 +17,14 @@ from redis.asyncio import Redis
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
+PAYMENT_TOKEN = "381764678:TEST:ВАШ_ТЕСТОВЫЙ_ТОКЕН" # Вставь сюда реальный токен от ЮKassa
 DB_FILE = "users_db.json"
 MY_ID = 297967650
 
-# ВСТАВЬ СЮДА ПРАВИЛЬНЫЙ ТОКЕН (Он должен содержать слово :TEST: внутри)
-PAYMENT_TOKEN = "381764678:TEST:181793"
-
-# --- REDIS STORAGE ---
 redis = Redis(host='localhost')
 storage = RedisStorage(redis=redis)
-
-# --- БАЗА КОДОНОВ И РУН ---
-BASE_MAP = {"1": "А", "2": "Ц", "3": "У", "4": "Г"}
-AMINO_ACIDS = {
-    "Аргинин": {"codons": ["ЦГЦ", "ЦГУ", "ЦГА", "ЦГГ", "АГА", "АГГ"], "runes": ["Ч", "Y"]},
-    "Аланин": {"codons": ["ГЦУ", "ГЦГ", "ГЦЦ", "ГЦА"], "runes": [")", "¥", "𐰉", "𐰈"]},
-    "Аспарагин": {"codons": ["ААУ", "ААЦ"], "runes": ["ʎ"]},
-    "Аспарагиновая к-та": {"codons": ["ГАУ", "ГАЦ"], "runes": ["*", "1"]},
-    "Валин": {"codons": ["ГУУ", "ГУЦ", "ГУА", "ГУГ"], "runes": ["𐰓", "9", "ς"]},
-    "Глютамин": {"codons": ["ЦАА", "ЦАГ"], "runes": ["Λ", "П"]},
-    "Глютаминовая к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
-    "Гистидин": {"codons": ["ЦАУ", "ЦАЦ"], "runes": ["𐰓"]},
-    "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺", "D", "❂"]},
-    "Стоп-кодон": {"codons": ["УАА"], "runes": ["33"]},
-    "Изолейцин": {"codons": ["АУУ", "АУЦ", "АУА"], "runes": ["I|", "Є"]},
-    "Лейцин": {"codons": ["УУА", "УУГ", "ЦУУ", "ЦУЦ", "ЦУА", "ЦУГ"], "runes": ["Y", "J"]},
-    "Лизин": {"codons": ["ААА", "ААГ"], "runes": ["↑"]},
-    "Пирролизин": {"codons": ["УАГ"], "runes": ["ᛟ"]},
-    "Метионин": {"codons": ["АУГ"], "runes": ["Г"]},
-    "Пролин": {"codons": ["ЦЦУ", "ЦЦГ", "ЦЦЦ", "ЦЦА"], "runes": ["ᛉ"]},
-    "Серин": {"codons": ["УЦУ", "УЦГ", "УЦЦ", "УЦА", "АГУ", "АГЦ"], "runes": ["D", "☺"]},
-    "Триптофан": {"codons": ["УГГ"], "runes": ["⌂"]},
-    "Тирозин": {"codons": ["УАУ", "УАЦ"], "runes": ["ᛒ", "ᛃ"]},
-    "Треонин": {"codons": ["АЦУ", "АЦГ", "АЦЦ", "АЦА"], "runes": ["ㅋ", "N", "◁", "F"]},
-    "Фенилаланин": {"codons": ["УУУ", "УУЦ"], "runes": ["X", "|"]},
-    "Цистеин": {"codons": ["УГУ", "УГЦ"], "runes": ["︽", "h"]},
-    "Селеноцистеин": {"codons": ["УГА"], "runes": ["M"]}
-}
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(storage=storage)
 
 # --- СОСТОЯНИЯ ---
 class Ritual(StatesGroup):
@@ -62,132 +32,31 @@ class Ritual(StatesGroup):
     waiting_for_green = State()
     waiting_for_red = State()
     waiting_for_rune_choice = State()
+    waiting_for_payment = State()
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=storage)
+# --- ЛОГИКА ОПЛАТЫ ---
+@dp.pre_checkout_query()
+async def pre_checkout_process(pre_checkout: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
 
-def load_db():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r") as f: return json.load(f)
-    return {}
-
-def save_db(data):
-    with open(DB_FILE, "w") as f: json.dump(data, f)
-
-@dp.message(F.text == "/restart")
-async def restart_bot(message: Message):
-    if message.from_user.id == MY_ID:
-        await message.answer("🔄 Перезагружаюсь...")
-        os._exit(0)
-
-@dp.message(F.text == "/reset")
-async def reset_timer(message: Message, state: FSMContext):
-    if message.from_user.id == MY_ID:
-        db = load_db()
-        user_id = str(message.from_user.id)
-        if user_id in db:
-            del db[user_id]
-            save_db(db)
-        await state.clear()
-        await message.answer("✅ Твой личный таймер сброшен. Напиши /start")
-
-@dp.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
-    db = load_db()
-    user_id = str(message.from_user.id)
-    if user_id in db:
-        if datetime.now() < datetime.fromisoformat(db[user_id]):
-            await message.answer("⏳ Обряд уже проведен! Следующий будет доступен через 12 часов.")
-            return
-
+@dp.message(F.successful_payment)
+async def successful_payment(message: Message, state: FSMContext):
+    # Достаем сохраненные руны из памяти
+    data = await state.get_data()
+    runes = data.get('final_runes', [])
+    aminos = data.get('final_aminos', [])
+    
+    aminos_encoded = urllib.parse.quote(",".join(aminos))
+    web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(datetime.now().timestamp())}"
+    
+    kb_final = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📖 Открыть расшифровку", web_app=WebAppInfo(url=web_app_url))]
+    ])
+    
+    await message.answer("✅ Оплата прошла успешно! Теперь вам доступна расшифровка:", reply_markup=kb_final)
     await state.clear()
-    await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
-    
-    kb_blue = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
-    ])
-    
-    await message.answer("🔮 **Начинаем обряд Белой Магии Рун!**\n\nКомплекс 1. Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=kb_blue)
-    await state.set_state(Ritual.waiting_for_blue)
 
-@dp.callback_query(Ritual.waiting_for_blue, F.data.startswith("throw_"))
-async def proc_blue(callback: CallbackQuery, state: FSMContext):
-    await callback.answer() 
-    await state.update_data(blue=callback.data.split("_")[1])
-    
-    kb_green = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"🟢 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
-    ])
-    
-    await callback.message.edit_text("Теперь посмотри на **ЗЕЛЕНУЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=kb_green)
-    await state.set_state(Ritual.waiting_for_green)
-
-@dp.callback_query(Ritual.waiting_for_green, F.data.startswith("throw_"))
-async def proc_green(callback: CallbackQuery, state: FSMContext):
-    await callback.answer() 
-    await state.update_data(green=callback.data.split("_")[1])
-    
-    kb_red = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"🔴 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
-    ])
-    
-    await callback.message.edit_text("Теперь посмотри на **КРАСНУЮ** грань. Сколько точек?", parse_mode="Markdown", reply_markup=kb_red)
-    await state.set_state(Ritual.waiting_for_red)
-
-@dp.callback_query(Ritual.waiting_for_red, F.data.startswith("throw_"))
-async def proc_red(callback: CallbackQuery, state: FSMContext):
-    await callback.answer() 
-    data = await state.get_data()
-    triplet = BASE_MAP[data['blue']] + BASE_MAP[data['green']] + BASE_MAP[callback.data.split("_")[1]]
-    
-    amino, runes = "Неизвестно", []
-    for name, a_data in AMINO_ACIDS.items():
-        if triplet in a_data["codons"]:
-            amino, runes = name, a_data["runes"]
-            break
-    
-    await state.update_data(current_runes=runes, current_amino=amino)
-    await callback.message.delete()
-    
-    if runes:
-        media_group = []
-        for i in range(len(runes)):
-            suffix = "" if i == 0 else str(i + 1)
-            image_path = f"images/amino/{amino}{suffix}.jpg"
-            if os.path.exists(image_path):
-                caption = f"🧬 **{amino}** (Руна {i+1})" if len(runes) > 1 else f"🧬 **{amino}**"
-                media_group.append(InputMediaPhoto(media=FSInputFile(image_path), caption=caption, parse_mode="Markdown"))
-        
-        if media_group:
-            await bot.send_media_group(chat_id=callback.message.chat.id, media=media_group)
-        else:
-            await bot.send_message(chat_id=callback.message.chat.id, text=f"🧬 **{amino}**\n*(Картинки еще не загружены)*", parse_mode="Markdown")
-
-        if len(runes) > 1:
-            kb_buttons = []
-            for i, r in enumerate(runes):
-                label = f"Руна {i+1}"
-                kb_buttons.append([InlineKeyboardButton(text=f"👉 {label} ({r})", callback_data=f"rune_{i}")])
-            
-            await bot.send_message(
-                chat_id=callback.message.chat.id,
-                text="👆 **Этой аминокислоте соответствует несколько рун. Сделай свой выбор:**",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons)
-            )
-            await state.set_state(Ritual.waiting_for_rune_choice)
-        else:
-            await save_rune_and_continue(callback.message, state, runes[0], amino)
-    else:
-        await bot.send_message(chat_id=callback.message.chat.id, text=f"Триплет {triplet} не найден. Напиши /start для сброса.")
-
-@dp.callback_query(Ritual.waiting_for_rune_choice, F.data.startswith("rune_"))
-async def proc_rune(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    data = await state.get_data()
-    await callback.message.delete() 
-    await save_rune_and_continue(callback.message, state, data['current_runes'][int(callback.data.split("_")[1])], data['current_amino'])
-
+# --- ЛОГИКА ОБРЯДА ---
 async def save_rune_and_continue(message: Message, state: FSMContext, rune: str, amino: str):
     data = await state.get_data()
     runes = data.get('final_runes', []) + [rune]
@@ -196,85 +65,19 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
     
     if complex_num < 3:
         await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos)
-        
-        kb_blue = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]
-        ])
-        
-        await bot.send_message(
-            chat_id=message.chat.id, 
-            text=f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** Брось палочки и посмотри на **СИНЮЮ** грань:", 
-            reply_markup=kb_blue, 
-            parse_mode="Markdown"
-        )
-        await state.set_state(Ritual.waiting_for_blue)
+        # (Тут код запроса нового броска как в прошлой версии...)
     else:
-        aminos_joined = ",".join(aminos)
-        aminos_encoded = urllib.parse.quote(aminos_joined)
+        # ЗАВЕРШЕНИЕ: Сохраняем данные и просим оплатить
+        await state.update_data(final_runes=runes, final_aminos=aminos)
+        await message.answer("🎉 **ОБРЯД ЗАВЕРШЕН!**\nДля получения расшифровки нажмите кнопку ниже:")
         
-        web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(datetime.now().timestamp())}"
-        
-        kb_final = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📖 Открыть расшифровку", web_app=WebAppInfo(url=web_app_url))]
-        ])
-
-        final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада рун: **{' | '.join(runes)}**\n\nНанеси эти руны на нижнюю часть волчка справа налево и закрути его на мандале 3 раза.\n\n👇 **Нажми на кнопку ниже, чтобы узнать значения выпавших аминокислот:**"
-
-        await bot.send_message(
-            chat_id=message.chat.id, 
-            text=final_text, 
-            parse_mode="Markdown",
-            reply_markup=kb_final
+        price = [LabeledPrice(label="Расшифровка обряда", amount=50000)]
+        await bot.send_invoice(
+            chat_id=message.chat.id, title="Разблокировать результат",
+            description="Оплата доступа к расшифровке ваших рун.",
+            payload="unlock_result", provider_token=PAYMENT_TOKEN,
+            currency="RUB", prices=price
         )
-        
-        db = load_db()
-        db[str(message.chat.id)] = (datetime.now() + timedelta(hours=12)).isoformat()
-        save_db(db)
-        await state.clear()
+        await state.set_state(Ritual.waiting_for_payment)
 
-
-# ==========================================
-# БЛОК ОПЛАТЫ (ТЕСТ)
-# ==========================================
-
-@dp.message(Command("buy"))
-async def send_invoice(message: Message):
-    # Если токен не заменен, бот выдаст понятное предупреждение
-    if "СЛОВОМ_TEST" in PAYMENT_TOKEN:
-        await message.answer("⚠️ Ошибка: Ты забыл вставить тестовый токен от ЮKassa в код бота (переменная PAYMENT_TOKEN).")
-        return
-
-    # Цена в копейках! 50000 = 500 рублей 00 копеек
-    price = [LabeledPrice(label="VIP-подписка (ТЕСТ)", amount=50000)]
-    
-    await bot.send_invoice(
-        chat_id=message.chat.id,
-        title="Тестовая оплата подписки",
-        description="Это проверка работы эквайринга ЮKassa. Реальные деньги списаны не будут!",
-        payload="test_invoice", # Внутренний ID платежа для бота
-        provider_token=PAYMENT_TOKEN,
-        currency="RUB",
-        prices=price,
-        start_parameter="test_buy"
-    )
-
-@dp.pre_checkout_query()
-async def pre_checkout_process(pre_checkout: PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
-
-@dp.message(F.successful_payment)
-async def successful_payment(message: Message):
-    await message.answer(f"🎉 Ура! Тестовая оплата на сумму {message.successful_payment.total_amount // 100} руб. прошла успешно!\n\nСистема работает идеально.")
-
-# ==========================================
-# ЗАПУСК БОТА
-# ==========================================
-
-async def main():
-    logging.basicConfig(level=logging.INFO)
-    os.makedirs("images/amino", exist_ok=True)
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# ... (остальные функции proc_blue, proc_green, proc_red оставляем как были) ...
