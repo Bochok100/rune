@@ -17,7 +17,7 @@ from redis.asyncio import Redis
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
-PAYMENT_TOKEN = "381764678:TEST:ВАШ_ТЕСТОВЫЙ_ТОКЕН" # <-- ВСТАВЬ СЮДА СВОЙ ТОКЕН ОТ ЮКАССЫ!
+PAYMENT_TOKEN = "381764678:TEST:181793" 
 DB_FILE = "users_db.json"
 MY_ID = 297967650
 
