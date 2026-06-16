@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
-    FSInputFile, InputMediaPhoto, LabeledPrice, PreCheckoutQuery
+    FSInputFile, InputMediaPhoto, LabeledPrice, PreCheckoutQuery,
+    ReplyKeyboardRemove
 )
 from aiogram.types.web_app_info import WebAppInfo
 from aiogram.filters import CommandStart, Command
@@ -19,9 +20,9 @@ from redis.asyncio import Redis
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
-PAYMENT_TOKEN = "381764678:TEST:ВАШ_ТЕСТОВЫЙ_ТОКЕН" # <-- ВСТАВЬ СВОЙ ТОКЕН СЮДА!
+PAYMENT_TOKEN = "381764678:TEST:181793" # <-- ВСТАВЬ СВОЙ ТОКЕН СЮДА!
 DB_FILE = "users_db.json"
-MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID ДЛЯ ЗАЯВОК
+MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID
 
 redis = Redis(host='localhost')
 storage = RedisStorage(redis=redis)
@@ -92,7 +93,6 @@ def get_greeting_text(user_data, now):
             greeting += "⚠️ **Ваш 3-дневный бесплатный период окончен.**\nПройдите обряд, чтобы оплатить доступ к результатам и попасть в VIP-клуб.\n\n"
     return greeting
 
-# --- ПЛАНИРОВЩИК УВЕДОМЛЕНИЙ ---
 async def daily_notifier():
     while True:
         db = load_db()
@@ -121,7 +121,7 @@ async def daily_notifier():
         if changed: save_db(db)
         await asyncio.sleep(3600)
 
-# --- ОБРАБОТКА ДАННЫХ ИЗ ФОРМЫ (ЗАКАЗ ПАЛОЧЕК) ---
+# --- ПРИЕМ ЗАКАЗОВ ИЗ ФОРМЫ ---
 @dp.message(F.web_app_data)
 async def web_app_data_handler(message: Message):
     try:
@@ -140,10 +140,12 @@ async def web_app_data_handler(message: Message):
     except Exception as e:
         logging.error(f"Ошибка обработки заказа формы: {e}")
 
-# --- КОМАНДЫ ---
 @dp.message(F.text == "/reset")
 async def reset_timer(message: Message, state: FSMContext):
     if message.from_user.id == MY_ID:
+        tmp = await message.answer("🔄 Обновление интерфейса...", reply_markup=ReplyKeyboardRemove())
+        await tmp.delete()
+        
         db = load_db()
         user_id = str(message.from_user.id)
         if user_id in db: del db[user_id]
@@ -153,6 +155,9 @@ async def reset_timer(message: Message, state: FSMContext):
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
+    tmp = await message.answer("🔄", reply_markup=ReplyKeyboardRemove())
+    await tmp.delete()
+    
     db = load_db()
     user_id = str(message.from_user.id)
     now = datetime.now()
@@ -173,7 +178,6 @@ async def cmd_start(message: Message, state: FSMContext):
     else:
         await message.answer(caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
 
-# --- ЛОГИКА ОБРЯДА ---
 @dp.callback_query(F.data == "start_ritual")
 async def start_ritual_handler(callback: CallbackQuery, state: FSMContext):
     db = load_db()
