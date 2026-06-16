@@ -17,7 +17,7 @@ from redis.asyncio import Redis
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
-PAYMENT_TOKEN = "381764678:TEST:181793" # <-- ВСТАВЬ СЮДА СВОЙ ТОКЕН ОТ ЮКАССЫ!
+PAYMENT_TOKEN = "381764678:TEST:ВАШ_ТЕСТОВЫЙ_ТОКЕН" # <-- ВСТАВЬ СВОЙ ТОКЕН СЮДА!
 DB_FILE = "users_db.json"
 MY_ID = 297967650
 
@@ -34,7 +34,7 @@ AMINO_ACIDS = {
     "Аспарагиновая к-та": {"codons": ["ГАУ", "ГАЦ"], "runes": ["*", "1"]},
     "Валин": {"codons": ["ГУУ", "ГУЦ", "ГУА", "ГУГ"], "runes": ["𐰓", "9", "ς"]},
     "Глютамин": {"codons": ["ЦАА", "ЦАГ"], "runes": ["Λ", "П"]},
-    "Глютаминовая к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
+    "Глютаминовой к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
     "Гистидин": {"codons": ["ЦАУ", "ЦАЦ"], "runes": ["𐰓"]},
     "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺", "D", "❂"]},
     "Стоп-кодон": {"codons": ["УАА"], "runes": ["33"]},
@@ -90,6 +90,7 @@ def get_greeting_text(user_data, now):
             greeting += "⚠️ **Ваш 3-дневный бесплатный период окончен.**\nПройдите обряд, чтобы оплатить доступ к результатам и попасть в VIP-клуб.\n\n"
     return greeting
 
+# --- ИСПРАВЛЕННЫЙ ПЛАНИРОВЩИК (ДОБАВЛЕНО 'def') ---
 async def daily_notifier():
     while True:
         db = load_db()
@@ -111,7 +112,7 @@ async def daily_notifier():
                     data['notified'] = 2
                     changed = True
                 elif days_left <= 0 and notified == 2:
-                    await bot.send_message(chat_id=int(user_id), text="⚠️ **Ваш бесплатный период завершен!**\n\nТеперь расшифровка обрядов стала платной. Оплатив доступ, вы получите результаты и инвайт в закрытый VIP-клуб! 🔮")
+                    await bot.send_message(chat_id=int(user_id), text="⚠️ **Ваш бесплатный период завершен!**\n\nТеперь расшифровка обрядов стала платной. Оплатив доступ, вы получите результаты и инвайт в закрытый VIP-сообщество! 🔮")
                     data['notified'] = 3
                     changed = True
             except Exception: pass
@@ -128,6 +129,7 @@ async def reset_timer(message: Message, state: FSMContext):
         await state.clear()
         await message.answer("✅ Твой профиль сброшен. Напиши /start для теста 3-х дней.")
 
+# --- СТАРТ С АНИМАЦИЕЙ GIF1 ---
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     db = load_db()
@@ -142,10 +144,8 @@ async def cmd_start(message: Message, state: FSMContext):
         }
         save_db(db)
     await state.clear()
-    
     caption = get_greeting_text(db[user_id], now)
     
-    # Если загружена стартовая гифка, отправляем её с меню
     if os.path.exists("gif1.mp4"):
         await message.answer_animation(animation=FSInputFile("gif1.mp4"), caption=caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
     else:
@@ -158,25 +158,21 @@ async def start_ritual_handler(callback: CallbackQuery, state: FSMContext):
     user_data = db.get(user_id, {})
     now = datetime.now()
     next_ritual = datetime.fromisoformat(user_data.get("next_ritual_time", now.isoformat()))
-    
     if now < next_ritual:
         time_left = next_ritual - now
         hours, remainder = divmod(time_left.seconds, 3600)
         minutes, _ = divmod(remainder, 60)
         await callback.answer(f"⏳ Обряд уже проведен! Следующий будет доступен через {hours} ч. {minutes} мин.", show_alert=True)
         return
-        
     await callback.message.delete()
     await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "🔮 **Начинаем обряд.**\n\nКомплекс 1. Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
     
-    # Отправляем гифку, если файл загружен
     if os.path.exists("gif2.mp4"):
         await bot.send_animation(chat_id=callback.message.chat.id, animation=FSInputFile("gif2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
     else:
         await bot.send_message(chat_id=callback.message.chat.id, text=caption, parse_mode="Markdown", reply_markup=kb)
-        
     await state.set_state(Ritual.waiting_for_blue)
 
 @dp.callback_query(Ritual.waiting_for_blue, F.data.startswith("throw_"))
@@ -184,8 +180,6 @@ async def proc_blue(callback: CallbackQuery, state: FSMContext):
     await state.update_data(blue=callback.data.split("_")[1])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🟢 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Теперь посмотри на **ЗЕЛЕНУЮ** грань. Сколько точек?"
-    
-    # Проверяем, есть ли анимация/фото в сообщении, чтобы правильно его отредактировать
     if callback.message.animation or callback.message.video or callback.message.photo:
         await callback.message.edit_caption(caption=caption, parse_mode="Markdown", reply_markup=kb)
     else:
@@ -197,7 +191,6 @@ async def proc_green(callback: CallbackQuery, state: FSMContext):
     await state.update_data(green=callback.data.split("_")[1])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔴 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Теперь посмотри на **КРАСНУЮ** грань. Сколько точек?"
-    
     if callback.message.animation or callback.message.video or callback.message.photo:
         await callback.message.edit_caption(caption=caption, parse_mode="Markdown", reply_markup=kb)
     else:
@@ -238,18 +231,14 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
     runes = data.get('final_runes', []) + [rune]
     aminos = data.get('final_aminos', []) + [amino]
     complex_num = data.get('complex_num', 1)
-    
     if complex_num < 3:
         await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos)
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
         caption = f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** СИНЯЯ грань:"
-        
-        # Снова отправляем гифку для нового комплекса бросков
         if os.path.exists("gif2.mp4"):
             await message.answer_animation(animation=FSInputFile("gif2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
         else:
             await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
-            
         await state.set_state(Ritual.waiting_for_blue)
     else:
         db = load_db()
@@ -262,14 +251,13 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         if is_paid or now < trial_end:
             aminos_encoded = urllib.parse.quote(",".join(aminos))
             web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(now.timestamp())}"
+            # ТЕКСТ КНОПКИ ИЗМЕНЕН НА "📖 Получить результаты"
             kb_final = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))]])
             final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада: **{' | '.join(runes)}**\nПерепишите их на полоску бумаги (справа налево)."
-            
             if not is_paid:
                 time_left = trial_end - now
                 days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
                 final_text += f"\n\n🎁 *У вас идет бесплатный период (осталось дней: {days_left}).*"
-                
             await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
             user_data["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
             db[user_id] = user_data
