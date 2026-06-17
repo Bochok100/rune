@@ -22,7 +22,7 @@ from redis.asyncio import Redis
 BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
 PAYMENT_TOKEN = "390540012:LIVE:98072"
 DB_FILE = "users_db.json"
-MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID ЗДЕСЬ ДЛЯ ЗАЯВОК
+MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID
 
 redis = Redis(host='localhost')
 storage = RedisStorage(redis=redis)
@@ -98,7 +98,6 @@ def get_greeting_text(user_data, now):
     time_left = trial_end - now
     days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
     
-    # ТЕКСТ ПОМЕНЯН МЕСТАМИ (ПРИВЕТСТВИЕ)
     greeting = "Приветствую. Это Ваш цифровой помощник в достижении гармонии. Используем мудрость салгын кут и силу рунических символов, чтобы помочь вам восполнить утраченный ресурс.\n\n"
     
     if not user_data.get("paid", False):
@@ -136,7 +135,6 @@ async def daily_notifier():
         if changed: save_db(db)
         await asyncio.sleep(3600)
 
-# --- ПРИЕМ ДАННЫХ ИЗ ФОРМЫ ---
 @dp.message(F.web_app_data)
 async def web_app_data_handler(message: Message, state: FSMContext):
     try:
@@ -172,7 +170,6 @@ async def web_app_data_handler(message: Message, state: FSMContext):
 
 @dp.message(F.text == "/reset")
 async def reset_timer(message: Message, state: FSMContext):
-    # ПРОВЕРКА НА MY_ID УБРАНА! Теперь ты можешь сбрасывать таймер с любого аккаунта.
     db = load_db()
     user_id = str(message.from_user.id)
     if user_id in db: del db[user_id]
@@ -211,8 +208,8 @@ async def start_ritual_text_handler(message: Message, state: FSMContext):
 
 @dp.callback_query(F.data == "start_ritual")
 async def start_ritual_handler(callback: CallbackQuery, state: FSMContext):
+    await callback.answer() # СНИМАЕМ ЛАГ КНОПКИ
     await process_ritual_start(callback.message, state, str(callback.from_user.id))
-    await callback.answer()
 
 async def process_ritual_start(message: Message, state: FSMContext, user_id: str):
     db = load_db()
@@ -230,7 +227,6 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
     await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     
-    # ТЕКСТ ПОМЕНЯН МЕСТАМИ (Бросай как на примере)
     caption = (
         "Бросай как на примере выше\n\n"
         "🔮 **Комплекс 1.** Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
@@ -244,6 +240,7 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
 
 @dp.callback_query(Ritual.waiting_for_blue, F.data.startswith("throw_"))
 async def proc_blue(callback: CallbackQuery, state: FSMContext):
+    await callback.answer() # СНИМАЕМ ЛАГ КНОПКИ
     await state.update_data(blue=callback.data.split("_")[1])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🟢 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Теперь посмотри на **ЗЕЛЕНУЮ** грань. Сколько точек?"
@@ -255,6 +252,7 @@ async def proc_blue(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(Ritual.waiting_for_green, F.data.startswith("throw_"))
 async def proc_green(callback: CallbackQuery, state: FSMContext):
+    await callback.answer() # СНИМАЕМ ЛАГ КНОПКИ
     await state.update_data(green=callback.data.split("_")[1])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔴 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Теперь посмотри на **КРАСНУЮ** грань. Сколько точек?"
@@ -266,6 +264,7 @@ async def proc_green(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(Ritual.waiting_for_red, F.data.startswith("throw_"))
 async def proc_red(callback: CallbackQuery, state: FSMContext):
+    await callback.answer() # СНИМАЕМ ЛАГ КНОПКИ
     data = await state.get_data()
     triplet = BASE_MAP[data['blue']] + BASE_MAP[data['green']] + BASE_MAP[callback.data.split("_")[1]]
     amino, runes = "Неизвестно", []
@@ -280,13 +279,19 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
             kb_buttons = []
             media_group = []
             
+            # --- УМНЫЙ ПОИСК КАРТИНОК (.jpg, .png, .jpeg) ---
             for i, r in enumerate(runes):
                 kb_buttons.append([InlineKeyboardButton(text=f"👉 Руна {i+1} ({r})", callback_data=f"rune_{i}")])
-                safe_name = f"{amino}_{i+1}.jpg"
-                rune_img_path = os.path.join("images", "runes", safe_name)
                 
-                if os.path.exists(rune_img_path):
-                    media_group.append(InputMediaPhoto(type='photo', media=FSInputFile(rune_img_path), caption=f"Вариант {i+1}"))
+                img_path = None
+                for ext in ['.jpg', '.png', '.jpeg', '.JPG', '.PNG']:
+                    candidate = os.path.join("images", "runes", f"{amino}_{i+1}{ext}")
+                    if os.path.exists(candidate):
+                        img_path = candidate
+                        break
+                
+                if img_path:
+                    media_group.append(InputMediaPhoto(type='photo', media=FSInputFile(img_path), caption=f"Вариант {i+1}"))
             
             await callback.message.delete()
             if media_group:
@@ -306,6 +311,7 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(Ritual.waiting_for_rune_choice, F.data.startswith("rune_"))
 async def proc_rune(callback: CallbackQuery, state: FSMContext):
+    await callback.answer() # СНИМАЕМ ЛАГ КНОПКИ
     data = await state.get_data()
     await callback.message.delete() 
     await save_rune_and_continue(callback.message, state, data['current_runes'][int(callback.data.split("_")[1])], data['current_amino'])
@@ -394,7 +400,6 @@ async def successful_payment(message: Message, state: FSMContext):
         delivery = order_data.get("delivery", "Не указано")
         address = order_data.get("address", "-")
         
-        # Сообщение ПОСЛЕ оплаты
         admin_text = (
             "✅ 💰 **ЗАКАЗ ПАЛОЧЕК УСПЕШНО ОПЛАЧЕН!** 💰 ✅\n\n"
             f"👤 **Покупатель:** {fio}\n"
