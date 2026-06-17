@@ -5,6 +5,7 @@ import os
 import urllib.parse
 from datetime import datetime, timedelta
 
+from dotenv import load_dotenv # <-- НОВАЯ БИБЛИОТЕКА ДЛЯ СЕЙФА
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
@@ -18,9 +19,11 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
-# --- НАСТРОЙКИ ---
-BOT_TOKEN = "8713600489:AAHaOLZZqIk6FID-sXclx3BZ6sMbKztCkn4"
-PAYMENT_TOKEN = "390540012:LIVE:98072"
+# --- ЗАГРУЗКА НАСТРОЕК ИЗ НЕВИДИМОГО ФАЙЛА ---
+load_dotenv() 
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+PAYMENT_TOKEN = os.getenv("PAYMENT_TOKEN")
 DB_FILE = "users_db.json"
 MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID
 
@@ -71,7 +74,6 @@ def load_db():
 def save_db(data):
     with open(DB_FILE, "w") as f: json.dump(data, f)
 
-# --- ПРОЗРАЧНОЕ МЕНЮ ---
 def get_main_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📖 Об авторе", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/author.html"))],
@@ -80,7 +82,6 @@ def get_main_menu_kb():
         [InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]
     ])
 
-# --- НИЖНЯЯ КЛАВИАТУРА ---
 def get_bottom_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -201,7 +202,6 @@ async def cmd_start(message: Message, state: FSMContext):
         
     await message.answer("👇 Для начала работы используйте меню ниже:", reply_markup=get_bottom_kb())
 
-# --- ЛОГИКА ОБРЯДА ---
 @dp.message(F.text == "🔮 Начать обряд")
 async def start_ritual_text_handler(message: Message, state: FSMContext):
     await process_ritual_start(message, state, str(message.from_user.id))
@@ -267,10 +267,7 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
     
-    # ПОЛУЧАЕМ ЗНАЧЕНИЕ КРАСНОЙ ГРАНИ
     red_val = callback.data.split("_")[1]
-    
-    # ПРАВИЛЬНАЯ СБОРКА КОДОНА СТРОГО СПРАВА НАЛЕВО: КРАСНЫЙ -> ЗЕЛЕНЫЙ -> СИНИЙ
     triplet = BASE_MAP[red_val] + BASE_MAP[data['green']] + BASE_MAP[data['blue']]
     
     amino, runes = "Неизвестно", []
@@ -375,7 +372,6 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             await bot.send_invoice(chat_id=message.chat.id, title="Доступ к результатам", description="Оплата расшифровки рун и вступление в клуб.", payload="unlock_result", provider_token=PAYMENT_TOKEN, currency="RUB", prices=price)
             await state.set_state(Ritual.waiting_for_payment)
 
-# --- ПРОВЕРКА И ОБРАБОТКА ОПЛАТ ---
 @dp.pre_checkout_query()
 async def pre_checkout_process(pre_checkout: PreCheckoutQuery):
     await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
