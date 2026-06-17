@@ -9,7 +9,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
     FSInputFile, InputMediaPhoto, LabeledPrice, PreCheckoutQuery,
-    ReplyKeyboardMarkup, KeyboardButton
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 )
 from aiogram.types.web_app_info import WebAppInfo
 from aiogram.filters import CommandStart, Command
@@ -20,10 +20,9 @@ from redis.asyncio import Redis
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
-# БОЕВОЙ ТОКЕН ОПЛАТЫ:
 PAYMENT_TOKEN = "390540012:LIVE:98072"
 DB_FILE = "users_db.json"
-MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID
+MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID ЗДЕСЬ ДЛЯ ЗАЯВОК
 
 redis = Redis(host='localhost')
 storage = RedisStorage(redis=redis)
@@ -72,7 +71,7 @@ def load_db():
 def save_db(data):
     with open(DB_FILE, "w") as f: json.dump(data, f)
 
-# --- ПРОЗРАЧНОЕ МЕНЮ (С КНОПКОЙ НАЧАТЬ ОБРЯД) ---
+# --- ПРОЗРАЧНОЕ МЕНЮ ---
 def get_main_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📖 Об авторе", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/author.html"))],
@@ -81,7 +80,7 @@ def get_main_menu_kb():
         [InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]
     ])
 
-# --- НИЖНЯЯ КЛАВИАТУРА (НЕ СКРЫВАЕТСЯ) ---
+# --- НИЖНЯЯ КЛАВИАТУРА ---
 def get_bottom_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -91,8 +90,7 @@ def get_bottom_kb():
             ]
         ],
         resize_keyboard=True,
-        is_persistent=True, # Меню закреплено
-        one_time_keyboard=False # Меню никогда не сворачивается само
+        is_persistent=True 
     )
 
 def get_greeting_text(user_data, now):
@@ -100,7 +98,9 @@ def get_greeting_text(user_data, now):
     time_left = trial_end - now
     days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
     
-    greeting = "Бросай как на примере выше\n\n"
+    # ТЕКСТ ПОМЕНЯН МЕСТАМИ (ПРИВЕТСТВИЕ)
+    greeting = "Приветствую. Это Ваш цифровой помощник в достижении гармонии. Используем мудрость салгын кут и силу рунических символов, чтобы помочь вам восполнить утраченный ресурс.\n\n"
+    
     if not user_data.get("paid", False):
         if now < trial_end:
             greeting += f"🎁 **У вас активно {days_left} дня БЕСПЛАТНОГО пользования!**\n\n"
@@ -136,7 +136,7 @@ async def daily_notifier():
         if changed: save_db(db)
         await asyncio.sleep(3600)
 
-# --- ПРИЕМ ДАННЫХ ИЗ ФОРМЫ (ВЫСТАВЛЕНИЕ СЧЕТА И УВЕДОМЛЕНИЕ ДО ОПЛАТЫ) ---
+# --- ПРИЕМ ДАННЫХ ИЗ ФОРМЫ ---
 @dp.message(F.web_app_data)
 async def web_app_data_handler(message: Message, state: FSMContext):
     try:
@@ -172,14 +172,13 @@ async def web_app_data_handler(message: Message, state: FSMContext):
 
 @dp.message(F.text == "/reset")
 async def reset_timer(message: Message, state: FSMContext):
-    if message.from_user.id == MY_ID:
-        db = load_db()
-        user_id = str(message.from_user.id)
-        if user_id in db: del db[user_id]
-        save_db(db)
-        await state.clear()
-        # Сразу выдаем нормальную клавиатуру при ресете
-        await message.answer("✅ Твой профиль сброшен. Напиши /start для теста 3-х дней.", reply_markup=get_bottom_kb())
+    # ПРОВЕРКА НА MY_ID УБРАНА! Теперь ты можешь сбрасывать таймер с любого аккаунта.
+    db = load_db()
+    user_id = str(message.from_user.id)
+    if user_id in db: del db[user_id]
+    save_db(db)
+    await state.clear()
+    await message.answer("✅ Твой профиль сброшен. Напиши /start для новых 3-х дней тестов.", reply_markup=ReplyKeyboardRemove())
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
@@ -203,10 +202,9 @@ async def cmd_start(message: Message, state: FSMContext):
     else:
         await message.answer(caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
         
-    # Выдаем закрепленную клавиатуру
     await message.answer("👇 Для начала работы используйте меню ниже:", reply_markup=get_bottom_kb())
 
-# --- ЛОГИКА ОБРЯДА ИЗ НИЖНЕЙ КНОПКИ И ИНЛАЙН КНОПКИ ---
+# --- ЛОГИКА ОБРЯДА ---
 @dp.message(F.text == "🔮 Начать обряд")
 async def start_ritual_text_handler(message: Message, state: FSMContext):
     await process_ritual_start(message, state, str(message.from_user.id))
@@ -232,9 +230,9 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
     await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     
+    # ТЕКСТ ПОМЕНЯН МЕСТАМИ (Бросай как на примере)
     caption = (
-        "Приветствую. Это Ваш цифровой помощник в достижении гармонии. "
-        "Используем мудрость салгын кут и силу рунических символов, чтобы помочь вам восполнить утраченный ресурс.\n\n"
+        "Бросай как на примере выше\n\n"
         "🔮 **Комплекс 1.** Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
     )
     
@@ -282,11 +280,8 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
             kb_buttons = []
             media_group = []
             
-            # --- ЛОГИКА ОТПРАВКИ КАРТИНОК РУН НА ВЫБОР ---
             for i, r in enumerate(runes):
                 kb_buttons.append([InlineKeyboardButton(text=f"👉 Руна {i+1} ({r})", callback_data=f"rune_{i}")])
-                
-                # Ищем картинки в папке images/runes/ с названием "Аланин_1.jpg", "Аланин_2.jpg" и т.д.
                 safe_name = f"{amino}_{i+1}.jpg"
                 rune_img_path = os.path.join("images", "runes", safe_name)
                 
@@ -294,8 +289,6 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
                     media_group.append(InputMediaPhoto(type='photo', media=FSInputFile(rune_img_path), caption=f"Вариант {i+1}"))
             
             await callback.message.delete()
-            
-            # Если картинки найдены - отправляем их галереей
             if media_group:
                 if len(media_group) == 1:
                     await bot.send_photo(chat_id=callback.message.chat.id, photo=media_group[0].media, caption=media_group[0].caption)
@@ -344,7 +337,6 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(now.timestamp())}"
             kb_final = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))]])
             
-            # ТЕКСТ "ПЕРЕПИШИТЕ НА БУМАГУ" УДАЛЕН ОТСЮДА
             final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада: **{' | '.join(runes)}**\n\n"
             if not is_paid:
                 time_left = trial_end - now
@@ -390,7 +382,6 @@ async def successful_payment(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))],
             [InlineKeyboardButton(text="💎 Вступить в сообщество", url="https://t.me/+SjHfMeVK4GA3N2Ey")]
         ])
-        # ТЕКСТ "ПЕРЕПИШИТЕ НА БУМАГУ" УДАЛЕН ОТСЮДА ТАКЖЕ
         final_text = f"✅ **Оплата прошла успешно! Добро пожаловать.**\n\nТвоя финальная триада: **{' | '.join(runes)}**\n\n👇 Нажмите на кнопку ниже, чтобы вступить в наше закрытое сообщество!"
         await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
         await state.clear()
@@ -403,6 +394,7 @@ async def successful_payment(message: Message, state: FSMContext):
         delivery = order_data.get("delivery", "Не указано")
         address = order_data.get("address", "-")
         
+        # Сообщение ПОСЛЕ оплаты
         admin_text = (
             "✅ 💰 **ЗАКАЗ ПАЛОЧЕК УСПЕШНО ОПЛАЧЕН!** 💰 ✅\n\n"
             f"👤 **Покупатель:** {fio}\n"
@@ -418,7 +410,6 @@ async def successful_payment(message: Message, state: FSMContext):
 
 async def main():
     os.makedirs("images/amino", exist_ok=True)
-    # ПАПКА ДЛЯ КАРТИНОК РУН БУДЕТ СОЗДАНА АВТОМАТИЧЕСКИ
     os.makedirs("images/runes", exist_ok=True) 
     await bot.delete_webhook(drop_pending_updates=True)
     asyncio.create_task(daily_notifier())
