@@ -19,7 +19,7 @@ from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
 # --- НАСТРОЙКИ ---
-BOT_TOKEN = "8713600489:AAExqDEYynuLWGOCdDbv5C49Z3TOplPxxoQ"
+BOT_TOKEN = "8713600489:AAHaOLZZqIk6FID-sXclx3BZ6sMbKztCkn4"
 PAYMENT_TOKEN = "390540012:LIVE:98072"
 DB_FILE = "users_db.json"
 MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID
