@@ -198,8 +198,8 @@ async def cmd_start(message: Message, state: FSMContext):
     
     caption = get_greeting_text(db[user_id], now)
     
-    if os.path.exists("gif1.mp4"):
-        await message.answer_animation(animation=FSInputFile("gif1.mp4"), caption=caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
+    if os.path.exists("gif1_v2.mp4"):
+        await message.answer_animation(animation=FSInputFile("gif1_v2.mp4"), caption=caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
     else:
         await message.answer(caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
         
@@ -237,8 +237,8 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
         "🔮 **Комплекс 1.** Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
     )
     
-    if os.path.exists("gif2.mp4"):
-        await message.answer_animation(animation=FSInputFile("gif2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
+    if os.path.exists("gif2_v2.mp4"):
+        await message.answer_animation(animation=FSInputFile("gif2_v2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
     else:
         await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
     await state.set_state(Ritual.waiting_for_blue)
@@ -303,8 +303,8 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos)
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
         caption = f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** СИНЯЯ грань:"
-        if os.path.exists("gif2.mp4"):
-            await message.answer_animation(animation=FSInputFile("gif2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
+        if os.path.exists("gif2_v2.mp4"):
+            await message.answer_animation(animation=FSInputFile("gif2_v2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
         else:
             await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
         await state.set_state(Ritual.waiting_for_blue)
