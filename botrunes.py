@@ -19,7 +19,7 @@ from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
 # --- НАСТРОЙКИ ---
-BOT_TOKEN = "8713600489:AAExqDEYynuLWGOCdDbv5C49Z3TOplPxxoQ"
+BOT_TOKEN = "8713600489:AAExqDEYynuLWGOCdDbv5C49Z3TOplPxxoQ" # <-- ТВОЙ НОВЫЙ ТОКЕН
 PAYMENT_TOKEN = "390540012:LIVE:98072"
 DB_FILE = "users_db.json"
 MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID
@@ -135,7 +135,6 @@ async def daily_notifier():
         if changed: save_db(db)
         await asyncio.sleep(3600)
 
-# --- ПРИЕМ ДАННЫХ ИЗ ФОРМЫ (ВЫСТАВЛЕНИЕ СЧЕТА И УВЕДОМЛЕНИЕ ДО ОПЛАТЫ) ---
 @dp.message(F.web_app_data)
 async def web_app_data_handler(message: Message, state: FSMContext):
     try:
@@ -280,7 +279,7 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
             kb_buttons = []
             media_group = []
             
-            # --- УМНЫЙ ПОИСК КАРТИНОК (.jpg, .png, .jpeg) ПО ТВОЕЙ СИСТЕМЕ ---
+            # --- УМНЫЙ ПОИСК КАРТИНОК (.jpg, .png, .jpeg) ---
             for i, r in enumerate(runes):
                 kb_buttons.append([InlineKeyboardButton(text=f"👉 Руна {i+1} ({r})", callback_data=f"rune_{i}")])
                 
@@ -288,7 +287,148 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
                 search_names = [amino]
                 if amino == "Стоп-кодон": search_names.append("Стоповой кодон")
                 
-                # Подставляем цифры так, как ты загрузил: "Аланин.jpg", "Аланин2.jpg", "Аланин 2.jpg" и т.д.
+                # Подставляем цифры
                 suffixes = ["", "1", "_1", " 1"] if i == 0 else [f"{i+1}", f"_{i+1}", f" {i+1}"]
                 
-                for s_name in
+                for s_name in search_names:
+                    for suf in suffixes:
+                        for ext in ['.jpg', '.png', '.jpeg', '.JPG', '.PNG']:
+                            candidate = os.path.join("images", "runes", f"{s_name}{suf}{ext}")
+                            if os.path.exists(candidate):
+                                img_path = candidate
+                                break
+                        if img_path: break
+                    if img_path: break
+                
+                if img_path:
+                    media_group.append(InputMediaPhoto(type='photo', media=FSInputFile(img_path), caption=f"Вариант {i+1}"))
+            
+            await callback.message.delete()
+            if media_group:
+                if len(media_group) == 1:
+                    await bot.send_photo(chat_id=callback.message.chat.id, photo=media_group[0].media, caption=media_group[0].caption)
+                else:
+                    await bot.send_media_group(chat_id=callback.message.chat.id, media=media_group)
+                    
+            await bot.send_message(chat_id=callback.message.chat.id, text=f"🧬 Выпало: **{amino}**\n👆 Выберите нужную руну:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_buttons), parse_mode="Markdown")
+            await state.set_state(Ritual.waiting_for_rune_choice)
+        else:
+            await callback.message.delete()
+            await save_rune_and_continue(callback.message, state, runes[0], amino)
+    else:
+        await callback.message.delete()
+        await bot.send_message(chat_id=callback.message.chat.id, text=f"Триплет {triplet} не найден.")
+
+@dp.callback_query(Ritual.waiting_for_rune_choice, F.data.startswith("rune_"))
+async def proc_rune(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    await callback.message.delete() 
+    await save_rune_and_continue(callback.message, state, data['current_runes'][int(callback.data.split("_")[1])], data['current_amino'])
+
+async def save_rune_and_continue(message: Message, state: FSMContext, rune: str, amino: str):
+    data = await state.get_data()
+    runes = data.get('final_runes', []) + [rune]
+    aminos = data.get('final_aminos', []) + [amino]
+    complex_num = data.get('complex_num', 1)
+    if complex_num < 3:
+        await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos)
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
+        caption = f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** СИНЯЯ грань:"
+        if os.path.exists("gif2_v2.mp4"):
+            await message.answer_animation(animation=FSInputFile("gif2_v2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
+        else:
+            await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
+        await state.set_state(Ritual.waiting_for_blue)
+    else:
+        db = load_db()
+        user_id = str(message.chat.id)
+        user_data = db.get(user_id, {})
+        now = datetime.now()
+        is_paid = user_data.get("paid", False)
+        trial_end = datetime.fromisoformat(user_data.get("trial_end", now.isoformat()))
+        
+        if is_paid or now < trial_end:
+            aminos_encoded = urllib.parse.quote(",".join(aminos))
+            web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(now.timestamp())}"
+            kb_final = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))]])
+            
+            final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада: **{' | '.join(runes)}**\n\n"
+            if not is_paid:
+                time_left = trial_end - now
+                days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
+                final_text += f"🎁 У вас идет бесплатный период (осталось дней: {days_left}). Чтобы расшифровать послание Салгын Кут и активировать силу рун, нажмите кнопку **ПОЛУЧИТЬ РЕЗУЛТАТЫ** ниже 👇"
+            await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
+            user_data["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
+            db[user_id] = user_data
+            save_db(db)
+            await state.clear()
+        else:
+            await state.update_data(final_runes=runes, final_aminos=aminos)
+            await message.answer("🎉 **ОБРЯД ЗАВЕРШЕН!**\n\n⚠️ Ваш бесплатный 3-дневный период закончился.\n\nДля получения расшифровки и доступа в наше сообщество, пожалуйста, оплатите подписку:")
+            price = [LabeledPrice(label="Расшифровка и сообщество", amount=99000)]
+            await bot.send_invoice(chat_id=message.chat.id, title="Доступ к результатам", description="Оплата расшифровки рун и вступление в клуб.", payload="unlock_result", provider_token=PAYMENT_TOKEN, currency="RUB", prices=price)
+            await state.set_state(Ritual.waiting_for_payment)
+
+# --- ПРОВЕРКА И ОБРАБОТКА ОПЛАТ ---
+@dp.pre_checkout_query()
+async def pre_checkout_process(pre_checkout: PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
+
+@dp.message(F.successful_payment)
+async def successful_payment(message: Message, state: FSMContext):
+    payload = message.successful_payment.invoice_payload
+    now = datetime.now()
+    
+    if payload == "unlock_result":
+        db = load_db()
+        user_id = str(message.chat.id)
+        if user_id in db and isinstance(db[user_id], dict):
+            db[user_id]["paid"] = True
+            db[user_id]["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
+            save_db(db)
+            
+        data = await state.get_data()
+        runes = data.get('final_runes', [])
+        aminos = data.get('final_aminos', [])
+        aminos_encoded = urllib.parse.quote(",".join(aminos))
+        web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(now.timestamp())}"
+        
+        kb_final = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))],
+            [InlineKeyboardButton(text="💎 Вступить в сообщество", url="https://t.me/+SjHfMeVK4GA3N2Ey")]
+        ])
+        final_text = f"✅ **Оплата прошла успешно! Добро пожаловать.**\n\nТвоя финальная триада: **{' | '.join(runes)}**\n\n👇 Нажмите на кнопку ниже, чтобы вступить в наше закрытое сообщество!"
+        await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
+        await state.clear()
+        
+    elif payload == "pay_sticks":
+        data = await state.get_data()
+        order_data = data.get("pending_order", {})
+        fio = order_data.get("fio", "Не указано")
+        phone = order_data.get("phone", "Не указано")
+        delivery = order_data.get("delivery", "Не указано")
+        address = order_data.get("address", "-")
+        
+        admin_text = (
+            "✅ 💰 **ЗАКАЗ ПАЛОЧЕК УСПЕШНО ОПЛАЧЕН!** 💰 ✅\n\n"
+            f"👤 **Покупатель:** {fio}\n"
+            f"📞 **Телефон:** {phone}\n"
+            f"🚚 **Способ:** {delivery}\n"
+            f"📍 **Адрес:** {address}\n\n"
+            f"💬 *Деньги получены. Свяжитесь с клиентом для отправки заказа!*"
+        )
+        await bot.send_message(chat_id=MY_ID, text=admin_text, parse_mode="Markdown")
+        
+        await message.answer("🎉 **Поздравляем с приобретением!**\nОплата прошла успешно. Скоро с вами свяжутся, или вы можете написать напрямую: @daayakh")
+        await state.update_data(pending_order=None)
+
+async def main():
+    os.makedirs("images/amino", exist_ok=True)
+    os.makedirs("images/runes", exist_ok=True) 
+    await bot.delete_webhook(drop_pending_updates=True)
+    asyncio.create_task(daily_notifier())
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
