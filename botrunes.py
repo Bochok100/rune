@@ -19,7 +19,7 @@ from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
 # --- НАСТРОЙКИ ---
-BOT_TOKEN = "8713600489:AAHaOLZZqIk6FID-sXclx3BZ6sMbKztCkn4" # <-- ТВОЙ НОВЫЙ ТОКЕН
+BOT_TOKEN = "8713600489:AAExqDEYynuLWGOCdDbv5C49Z3TOplPxxoQ"
 PAYMENT_TOKEN = "390540012:LIVE:98072"
 DB_FILE = "users_db.json"
 MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID
@@ -266,12 +266,19 @@ async def proc_green(callback: CallbackQuery, state: FSMContext):
 async def proc_red(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
-    triplet = BASE_MAP[data['blue']] + BASE_MAP[data['green']] + BASE_MAP[callback.data.split("_")[1]]
+    
+    # ПОЛУЧАЕМ ЗНАЧЕНИЕ КРАСНОЙ ГРАНИ
+    red_val = callback.data.split("_")[1]
+    
+    # ПРАВИЛЬНАЯ СБОРКА КОДОНА СТРОГО СПРАВА НАЛЕВО: КРАСНЫЙ -> ЗЕЛЕНЫЙ -> СИНИЙ
+    triplet = BASE_MAP[red_val] + BASE_MAP[data['green']] + BASE_MAP[data['blue']]
+    
     amino, runes = "Неизвестно", []
     for name, a_data in AMINO_ACIDS.items():
         if triplet in a_data["codons"]:
             amino, runes = name, a_data["runes"]
             break
+            
     await state.update_data(current_runes=runes, current_amino=amino)
     
     if runes:
@@ -279,7 +286,6 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
             kb_buttons = []
             media_group = []
             
-            # --- УМНЫЙ ПОИСК КАРТИНОК (.jpg, .png, .jpeg) ---
             for i, r in enumerate(runes):
                 kb_buttons.append([InlineKeyboardButton(text=f"👉 Руна {i+1} ({r})", callback_data=f"rune_{i}")])
                 
@@ -287,7 +293,6 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
                 search_names = [amino]
                 if amino == "Стоп-кодон": search_names.append("Стоповой кодон")
                 
-                # Подставляем цифры
                 suffixes = ["", "1", "_1", " 1"] if i == 0 else [f"{i+1}", f"_{i+1}", f" {i+1}"]
                 
                 for s_name in search_names:
