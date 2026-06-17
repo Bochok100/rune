@@ -329,7 +329,6 @@ async def show_carousel(chat_id: int, state: FSMContext, amino: str, runes: list
     img_path = find_rune_image(amino, current)
     kb = make_carousel_kb(current, total)
 
-    # Сохраняем текущий индекс карусели
     await state.update_data(carousel_index=current)
 
     caption = (
@@ -340,21 +339,33 @@ async def show_carousel(chat_id: int, state: FSMContext, amino: str, runes: list
 
     data = await state.get_data()
     carousel_msg_id = data.get("carousel_msg_id")
+    # Словарь file_id для уже отправленных картинок: {индекс: file_id}
+    carousel_file_ids = data.get("carousel_file_ids", {})
 
     if img_path:
-        if carousel_msg_id:
-            # Редактируем существующее сообщение
+        file_id = carousel_file_ids.get(str(current))
+
+        if carousel_msg_id and file_id:
+            # Есть file_id — редактируем существующее сообщение
             try:
                 await bot.edit_message_media(
                     chat_id=chat_id,
                     message_id=carousel_msg_id,
-                    media=InputMediaPhoto(media=FSInputFile(img_path), caption=caption, parse_mode="Markdown"),
+                    media=InputMediaPhoto(media=file_id, caption=caption, parse_mode="Markdown"),
                     reply_markup=kb
                 )
                 return
             except Exception:
-                pass  # если не вышло — отправим новое
-        # Отправляем новое фото
+                pass
+
+        if carousel_msg_id and not file_id:
+            # Нет file_id для этого индекса — удаляем старое и шлём новое
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
+            except Exception:
+                pass
+
+        # Отправляем новое фото и сохраняем file_id
         msg = await bot.send_photo(
             chat_id=chat_id,
             photo=FSInputFile(img_path),
@@ -362,7 +373,13 @@ async def show_carousel(chat_id: int, state: FSMContext, amino: str, runes: list
             parse_mode="Markdown",
             reply_markup=kb
         )
-        await state.update_data(carousel_msg_id=msg.message_id)
+        # Сохраняем file_id этой картинки
+        new_file_id = msg.photo[-1].file_id
+        carousel_file_ids[str(current)] = new_file_id
+        await state.update_data(
+            carousel_msg_id=msg.message_id,
+            carousel_file_ids=carousel_file_ids
+        )
     else:
         # Картинки нет — текстовое сообщение
         if carousel_msg_id:
@@ -376,7 +393,10 @@ async def show_carousel(chat_id: int, state: FSMContext, amino: str, runes: list
                 )
                 return
             except Exception:
-                pass
+                try:
+                    await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
+                except Exception:
+                    pass
         msg = await bot.send_message(
             chat_id=chat_id,
             text=caption,
@@ -411,7 +431,7 @@ async def proc_rune_carousel(callback: CallbackQuery, state: FSMContext):
             await bot.delete_message(chat_id=callback.message.chat.id, message_id=carousel_msg_id)
         except Exception:
             pass
-    await state.update_data(carousel_msg_id=None)
+    await state.update_data(carousel_msg_id=None, carousel_file_ids={})
     await save_rune_and_continue(callback.message, state, runes[chosen_index], amino)
 
 # Оставляем старый обработчик выбора руны (на случай если где-то ещё используется)
