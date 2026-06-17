@@ -5,7 +5,7 @@ import os
 import urllib.parse
 from datetime import datetime, timedelta
 
-# --- ЖЕСТКАЯ ПРИВЯЗКА К ПАПКЕ (ЧТОБЫ СЕРВЕР НЕ ТЕРЯЛ ФАЙЛЫ) ---
+# --- ЖЕСТКАЯ ПРИВЯЗКА К ПАПКЕ ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
 
@@ -23,14 +23,17 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
-# --- ЗАГРУЗКА ТОКЕНОВ ИЗ СЕЙФА ---
-load_dotenv()
+# --- УМНАЯ ЗАГРУЗКА ТОКЕНОВ ИЗ СЕЙФА ---
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-PAYMENT_TOKEN = os.getenv("PAYMENT_TOKEN")
-
-if not BOT_TOKEN:
+# Получаем токен и очищаем его от случайных пробелов и кавычек!
+raw_token = os.getenv("BOT_TOKEN")
+if not raw_token:
     raise ValueError("❌ КРИТИЧЕСКАЯ ОШИБКА: Бот не видит токен! Проверьте файл .env")
+BOT_TOKEN = raw_token.strip().replace('"', '').replace("'", "")
+
+raw_payment = os.getenv("PAYMENT_TOKEN")
+PAYMENT_TOKEN = raw_payment.strip().replace('"', '').replace("'", "") if raw_payment else ""
 
 DB_FILE = "users_db.json"
 MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID
@@ -90,12 +93,16 @@ def get_main_menu_kb():
         [InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]
     ])
 
+# --- ОБНОВЛЕННОЕ НИЖНЕЕ МЕНЮ С ОТЗЫВАМИ ---
 def get_bottom_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
             [
                 KeyboardButton(text="🔮 Начать обряд"),
-                KeyboardButton(text="🕯 Подготовка и Инвентарь", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/prep.html"))
+                KeyboardButton(text="🕯 Подготовка", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/prep.html"))
+            ],
+            [
+                KeyboardButton(text="💬 Отзывы", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/reviews.html"))
             ]
         ],
         resize_keyboard=True,
