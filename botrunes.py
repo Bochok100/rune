@@ -20,9 +20,10 @@ from redis.asyncio import Redis
 
 # --- НАСТРОЙКИ ---
 BOT_TOKEN = "8713600489:AAHj7U6brsJngHu0F6Ig-PLqwGRRjmlRbtc"
-PAYMENT_TOKEN = "381764678:TEST:181793" # <-- ТВОЙ ТОКЕН
+# БОЕВОЙ ТОКЕН ОПЛАТЫ:
+PAYMENT_TOKEN = "390540012:LIVE:98072"
 DB_FILE = "users_db.json"
-MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID
+MY_ID = 297967650  # <-- ТВОЙ TELEGRAM ID ЗДЕСЬ!
 
 redis = Redis(host='localhost')
 storage = RedisStorage(redis=redis)
@@ -71,14 +72,16 @@ def load_db():
 def save_db(data):
     with open(DB_FILE, "w") as f: json.dump(data, f)
 
+# --- ПРОЗРАЧНОЕ МЕНЮ (С КНОПКОЙ НАЧАТЬ ОБРЯД) ---
 def get_main_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📖 Об авторе", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/author.html"))],
         [InlineKeyboardButton(text="📜 История метода", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/method.html"))],
-        [InlineKeyboardButton(text="🌬️ Буор, Ийэ и Салгын Кут", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/kut.html"))]
+        [InlineKeyboardButton(text="🌬️ Буор, Ийэ и Салгын Кут", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/kut.html"))],
+        [InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]
     ])
 
-# --- НИЖНЯЯ КЛАВИАТУРА ИЗ ДВУХ КНОПОК ---
+# --- НИЖНЯЯ КЛАВИАТУРА (НЕ СКРЫВАЕТСЯ) ---
 def get_bottom_kb():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -87,7 +90,8 @@ def get_bottom_kb():
                 KeyboardButton(text="🕯 Подготовка и Инвентарь", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/prep.html"))
             ]
         ],
-        resize_keyboard=True
+        resize_keyboard=True,
+        is_persistent=True # Меню никогда не скрывается
     )
 
 def get_greeting_text(user_data, now):
@@ -100,7 +104,7 @@ def get_greeting_text(user_data, now):
         if now < trial_end:
             greeting += f"🎁 **У вас активно {days_left} дня БЕСПЛАТНОГО пользования!**\n\n"
         else:
-            greeting += "⚠️ **Ваш 3-дневный бесплатный период окончен.**\nПройдите обряд, чтобы оплатить доступ к результатам и попасть в VIP-клуб.\n\n"
+            greeting += "⚠️ **Ваш 3-дневный бесплатный период окончен.**\nПройдите обряд, чтобы оплатить доступ к результатам и попасть в закрытое сообщество.\n\n"
     return greeting
 
 async def daily_notifier():
@@ -124,14 +128,14 @@ async def daily_notifier():
                     data['notified'] = 2
                     changed = True
                 elif days_left <= 0 and notified == 2:
-                    await bot.send_message(chat_id=int(user_id), text="⚠️ **Ваш бесплатный период завершен!**\n\nТеперь расшифровка обрядов стала платной. Оплатив доступ, вы получите результаты и инвайт в закрытый VIP-сообщество! 🔮")
+                    await bot.send_message(chat_id=int(user_id), text="⚠️ **Ваш бесплатный период завершен!**\n\nТеперь расшифровка обрядов стала платной. Оплатив доступ, вы получите результаты и инвайт в закрытое сообщество! 🔮")
                     data['notified'] = 3
                     changed = True
             except Exception: pass
         if changed: save_db(db)
         await asyncio.sleep(3600)
 
-# --- ПРИЕМ ДАННЫХ ИЗ ФОРМЫ (ВЫСТАВЛЕНИЕ СЧЕТА) ---
+# --- ПРИЕМ ДАННЫХ ИЗ ФОРМЫ (ВЫСТАВЛЕНИЕ СЧЕТА И УВЕДОМЛЕНИЕ ДО ОПЛАТЫ) ---
 @dp.message(F.web_app_data)
 async def web_app_data_handler(message: Message, state: FSMContext):
     try:
@@ -139,6 +143,19 @@ async def web_app_data_handler(message: Message, state: FSMContext):
         if data.get("type") == "order_sticks":
             await state.update_data(pending_order=data)
             
+            # 1. Отправляем админу уведомление ДО оплаты
+            admin_pending_text = (
+                "⏳ **НОВАЯ ЗАЯВКА (Ожидает оплаты)** ⏳\n\n"
+                f"👤 **Имя:** {data['fio']}\n"
+                f"📞 **Телефон:** {data['phone']}\n"
+                f"🚚 **Способ:** {data['delivery']}\n"
+                f"📍 **Адрес:** {data['address']}\n"
+                f"💵 **Сумма к оплате:** {data['price']} руб.\n\n"
+                f"💬 *Клиенту выставлен счет. Ждем поступления средств...*"
+            )
+            await bot.send_message(chat_id=MY_ID, text=admin_pending_text, parse_mode="Markdown")
+
+            # 2. Выставляем счет клиенту
             price_rub = data.get("price", 400)
             prices = [LabeledPrice(label=f"Набор палочек ({data['delivery']})", amount=price_rub * 100)]
             
@@ -157,14 +174,12 @@ async def web_app_data_handler(message: Message, state: FSMContext):
 @dp.message(F.text == "/reset")
 async def reset_timer(message: Message, state: FSMContext):
     if message.from_user.id == MY_ID:
-        tmp = await message.answer("🔄 Обновление интерфейса...", reply_markup=ReplyKeyboardRemove())
-        await tmp.delete()
         db = load_db()
         user_id = str(message.from_user.id)
         if user_id in db: del db[user_id]
         save_db(db)
         await state.clear()
-        await message.answer("✅ Твой профиль сброшен. Напиши /start для теста 3-х дней.")
+        await message.answer("✅ Твой профиль сброшен. Напиши /start для теста 3-х дней.", reply_markup=ReplyKeyboardRemove())
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
@@ -190,11 +205,18 @@ async def cmd_start(message: Message, state: FSMContext):
         
     await message.answer("👇 Для начала работы используйте меню ниже:", reply_markup=get_bottom_kb())
 
-# --- ЛОГИКА ОБРЯДА ИЗ НИЖНЕЙ КНОПКИ ---
+# --- ЛОГИКА ОБРЯДА ИЗ НИЖНЕЙ КНОПКИ И ИНЛАЙН КНОПКИ ---
 @dp.message(F.text == "🔮 Начать обряд")
 async def start_ritual_text_handler(message: Message, state: FSMContext):
+    await process_ritual_start(message, state, str(message.from_user.id))
+
+@dp.callback_query(F.data == "start_ritual")
+async def start_ritual_handler(callback: CallbackQuery, state: FSMContext):
+    await process_ritual_start(callback.message, state, str(callback.from_user.id))
+    await callback.answer()
+
+async def process_ritual_start(message: Message, state: FSMContext, user_id: str):
     db = load_db()
-    user_id = str(message.from_user.id)
     user_data = db.get(user_id, {})
     now = datetime.now()
     next_ritual = datetime.fromisoformat(user_data.get("next_ritual_time", now.isoformat()))
@@ -208,19 +230,18 @@ async def start_ritual_text_handler(message: Message, state: FSMContext):
         
     await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
-    caption = "🔮 **Начинаем обряд.**\n\nКомплекс 1. Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
+    
+    caption = (
+        "Приветствую. Это Ваш цифровой помощник в достижении гармонии. "
+        "Используем мудрость салгын кут и силу рунических символов, чтобы помочь вам восполнить утраченный ресурс.\n\n"
+        "🔮 **Комплекс 1.** Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
+    )
     
     if os.path.exists("gif2.mp4"):
         await message.answer_animation(animation=FSInputFile("gif2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
     else:
         await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
     await state.set_state(Ritual.waiting_for_blue)
-
-@dp.callback_query(F.data == "start_ritual")
-async def start_ritual_handler(callback: CallbackQuery, state: FSMContext):
-    # На случай если нажмут старую инлайн кнопку
-    await start_ritual_text_handler(callback.message, state)
-    await callback.answer()
 
 @dp.callback_query(Ritual.waiting_for_blue, F.data.startswith("throw_"))
 async def proc_blue(callback: CallbackQuery, state: FSMContext):
@@ -312,8 +333,9 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             await state.clear()
         else:
             await state.update_data(final_runes=runes, final_aminos=aminos)
-            await message.answer("🎉 **ОБРЯД ЗАВЕРШЕН!**\n\n⚠️ Ваш бесплатный 3-дневный период закончился.\n\nДля получения расшифровки и доступа в наш VIP-клуб, пожалуйста, оплатите подписку:")
-            price = [LabeledPrice(label="Расшифровка и VIP-клуб", amount=50000)]
+            await message.answer("🎉 **ОБРЯД ЗАВЕРШЕН!**\n\n⚠️ Ваш бесплатный 3-дневный период закончился.\n\nДля получения расшифровки и доступа в наше сообщество, пожалуйста, оплатите подписку:")
+            # ИЗМЕНЕНА СУММА НА 990 РУБЛЕЙ (99000 копеек)
+            price = [LabeledPrice(label="Расшифровка и сообщество", amount=99000)]
             await bot.send_invoice(chat_id=message.chat.id, title="Доступ к результатам", description="Оплата расшифровки рун и вступление в клуб.", payload="unlock_result", provider_token=PAYMENT_TOKEN, currency="RUB", prices=price)
             await state.set_state(Ritual.waiting_for_payment)
 
@@ -343,9 +365,9 @@ async def successful_payment(message: Message, state: FSMContext):
         
         kb_final = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))],
-            [InlineKeyboardButton(text="💎 Вступить в VIP-клуб", url="https://t.me/+SjHfMeVK4GA3N2Ey")]
+            [InlineKeyboardButton(text="💎 Вступить в сообщество", url="https://t.me/+SjHfMeVK4GA3N2Ey")]
         ])
-        final_text = f"✅ **Оплата прошла успешно! Добро пожаловать.**\n\nТвоя финальная триада: **{' | '.join(runes)}**\nПерепишите их на полоску бумаги (справа налево).\n\n👇 Нажмите на кнопку ниже, чтобы вступить в наше закрытое VIP-сообщество!"
+        final_text = f"✅ **Оплата прошла успешно! Добро пожаловать.**\n\nТвоя финальная триада: **{' | '.join(runes)}**\nПерепишите их на полоску бумаги (справа налево).\n\n👇 Нажмите на кнопку ниже, чтобы вступить в наше закрытое сообщество!"
         await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
         await state.clear()
         
@@ -357,18 +379,17 @@ async def successful_payment(message: Message, state: FSMContext):
         delivery = order_data.get("delivery", "Не указано")
         address = order_data.get("address", "-")
         
-        # Сообщение ТЕБЕ в личку
+        # 3. Сообщение ПОСЛЕ оплаты
         admin_text = (
-            "💰 **ОПЛАЧЕН НОВЫЙ ЗАКАЗ ПАЛОЧЕК!** 💰\n\n"
+            "✅ 💰 **ЗАКАЗ ПАЛОЧЕК УСПЕШНО ОПЛАЧЕН!** 💰 ✅\n\n"
             f"👤 **Покупатель:** {fio}\n"
             f"📞 **Телефон:** {phone}\n"
             f"🚚 **Способ:** {delivery}\n"
             f"📍 **Адрес:** {address}\n\n"
-            f"💬 *Свяжитесь с клиентом для отправки заказа!*"
+            f"💬 *Деньги получены. Свяжитесь с клиентом для отправки заказа!*"
         )
         await bot.send_message(chat_id=MY_ID, text=admin_text, parse_mode="Markdown")
         
-        # Сообщение КЛИЕНТУ
         await message.answer("🎉 **Поздравляем с приобретением!**\nОплата прошла успешно. Скоро с вами свяжутся, или вы можете написать напрямую: @daayakh")
         await state.update_data(pending_order=None)
 
