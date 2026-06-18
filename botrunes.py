@@ -113,25 +113,22 @@ def get_greeting_text(user_data, now):
     time_left = trial_end - now
     days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
     greeting = "Приветствую. Это Ваш цифровой помощник в достижении гармонии. Используем мудрость салгын кут и силу рунических символов, чтобы помочь вам восполнить утраченный ресурс.\n\n"
-    if not user_data.get("paid", False):
-        if now < trial_end:
-            greeting += f"🎁 **У вас активно {days_left} дня БЕСПЛАТНОГО пользования!**\n\n"
-        else:
-            greeting += "⚠️ **Ваш 3-дневный бесплатный период окончен.**\nПройдите обряд, чтобы оплатить доступ к результатам и попасть в закрытое сообщество.\n\n"
+    if now < trial_end:
+        greeting += f"🎁 **У вас активно {days_left} дня БЕСПЛАТНОГО пользования!**\n\n"
+    else:
+        greeting += "⚠️ **Ваша подписка неактивна.**\nПройдите обряд, чтобы выбрать тариф и получить доступ к результатам и закрытому сообществу.\n\n"
     return greeting
 
-# Явная таблица: аминокислота -> список картинок по индексу руны
-# Порядок СТРОГО соответствует порядку рун в AMINO_ACIDS
 RUNE_IMAGES = {
-    "Аргинин":             ["Аргинин.jpg",            "Аргинин2.jpg"],
-    "Аланин":              ["Аланин.jpg",              "Аланин2.jpg",             "Аланин3.jpg",   "Аланин4.jpg"],
+    "Аргинин":             ["Аргинин.jpg",             "Аргинин2.jpg"],
+    "Аланин":              ["Аланин.jpg",              "Аланин2.jpg",              "Аланин3.jpg",   "Аланин4.jpg"],
     "Аспарагин":           ["Аспарагин.jpg"],
     "Аспарагиновая к-та":  ["Аспарагиновая к-та.jpg", "Аспарагиновая к-та2.jpg"],
-    "Валин":               ["Валин.jpg",               "Валин2.jpg",              "Валин3.jpg"],
+    "Валин":               ["Валин.jpg",               "Валин2.jpg",               "Валин3.jpg"],
     "Глютамин":            ["Глютамин.jpg",            "Глютамин2.jpg"],
     "Глютаминовая к-та":   ["Глютаминовая к-та.jpg"],
     "Гистидин":            ["Гистидин.jpg"],
-    "Глицин":              ["Глицин.jpg",              None,                      None],
+    "Глицин":              ["Глицин.jpg",              None,                       None],
     "Стоп-кодон":          ["Стоповой кодон.jpg"],
     "Изолейцин":           ["Изолейцин.jpg",           "Изолейцин2.jpg"],
     "Лейцин":              ["Лейцин.jpg",              "Лейцин2.jpg"],
@@ -142,23 +139,20 @@ RUNE_IMAGES = {
     "Серин":               ["Серин.jpg",               "Серин2.jpg"],
     "Триптофан":           ["Триптофан.jpg"],
     "Тирозин":             ["Тирозин.jpg",             "Тирозин2.jpg"],
-    "Треонин":             ["Треонин.jpg",             "Треонин2.jpg",            "Треонин3.jpg",  "Треонин4.jpg"],
+    "Треонин":             ["Треонин.jpg",             "Треонин2.jpg",             "Треонин3.jpg",  "Треонин4.jpg"],
     "Фенилаланин":         ["Фенилаланин.jpg",         "Фенилаланин 2.jpg"],
     "Цистеин":             ["Цистеин.jpg",             None],
     "Селеноцистеин":       ["Селеноцистеин.jpg"],
 }
 
 def find_rune_image(amino: str, index: int) -> str | None:
-    """Возвращает путь к картинке для руны по явной таблице."""
     files = RUNE_IMAGES.get(amino, [])
     if index >= len(files) or files[index] is None:
         return None
     path = os.path.join("images", "runes", files[index])
     return path if os.path.exists(path) else None
 
-
 def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
-    """Кнопки карусели: ◀ номер/всего ▶ + Выбрать эту руну."""
     nav_row = []
     if total > 1:
         prev_i = (current - 1) % total
@@ -181,22 +175,22 @@ async def daily_notifier():
         now = datetime.now()
         changed = False
         for user_id, data in db.items():
-            if isinstance(data, str) or data.get('paid', False): continue
+            if isinstance(data, str): continue
             trial_end = datetime.fromisoformat(data['trial_end'])
             time_left = trial_end - now
             days_left = int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0)
             notified = data.get('notified', 0)
             try:
                 if days_left == 2 and notified == 0:
-                    await bot.send_message(chat_id=int(user_id), text="⏳ **Напоминание:** У вас осталось 2 дня бесплатного доступа к обрядам рун!", parse_mode="Markdown")
+                    await bot.send_message(chat_id=int(user_id), text="⏳ **Напоминание:** У вас осталось 2 дня доступа к обрядам рун!", parse_mode="Markdown")
                     data['notified'] = 1
                     changed = True
                 elif days_left == 1 and notified == 1:
-                    await bot.send_message(chat_id=int(user_id), text="⏳ **Напоминание:** Завтра заканчивается ваш бесплатный период! Успейте провести обряд.", parse_mode="Markdown")
+                    await bot.send_message(chat_id=int(user_id), text="⏳ **Напоминание:** Завтра заканчивается ваш период доступа! Успейте провести обряд.", parse_mode="Markdown")
                     data['notified'] = 2
                     changed = True
                 elif days_left <= 0 and notified == 2:
-                    await bot.send_message(chat_id=int(user_id), text="⚠️ **Ваш бесплатный период завершен!**\n\nТеперь расшифровка обрядов стала платной. Оплатив доступ, вы получите результаты и инвайт в закрытое сообщество! 🔮", parse_mode="Markdown")
+                    await bot.send_message(chat_id=int(user_id), text="⚠️ **Ваш период подписки завершен!**\n\nВы можете продлить доступ, пройдя новый обряд. 🔮", parse_mode="Markdown")
                     data['notified'] = 3
                     changed = True
             except Exception: pass
@@ -337,127 +331,69 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
         return
 
     if len(runes) == 1:
-        # Только одна руна — сразу переходим дальше
         await save_rune_and_continue(callback.message, state, runes[0], amino)
         return
 
-    # Несколько рун — показываем карусель начиная с индекса 0
     await show_carousel(callback.message.chat.id, state, amino, runes, current=0)
     await state.set_state(Ritual.waiting_for_carousel)
 
 async def show_carousel(chat_id: int, state: FSMContext, amino: str, runes: list, current: int):
-    """Отправляет или редактирует сообщение карусели."""
     total = len(runes)
     rune_symbol = runes[current]
     img_path = find_rune_image(amino, current)
     kb = make_carousel_kb(current, total)
 
     await state.update_data(carousel_index=current)
-
-    caption = (
-        f"🧬 **{amino}**\n"
-        f"🔮 Руна: **{rune_symbol}**\n\n"
-        f"_{current+1} из {total} — листайте ◀ ▶ и выберите нужную_"
-    )
-
+    caption = f"🧬 **{amino}**\n🔮 Руна: **{rune_symbol}**\n\n_{current+1} из {total} — листайте ◀ ▶ и выберите нужную_"
     data = await state.get_data()
     carousel_msg_id = data.get("carousel_msg_id")
-    # Словарь file_id для уже отправленных картинок: {индекс: file_id}
     carousel_file_ids = data.get("carousel_file_ids", {})
 
     if img_path:
         file_id = carousel_file_ids.get(str(current))
-
         if carousel_msg_id and file_id:
-            # Есть file_id — редактируем существующее сообщение
             try:
-                await bot.edit_message_media(
-                    chat_id=chat_id,
-                    message_id=carousel_msg_id,
-                    media=InputMediaPhoto(media=file_id, caption=caption, parse_mode="Markdown"),
-                    reply_markup=kb
-                )
+                await bot.edit_message_media(chat_id=chat_id, message_id=carousel_msg_id, media=InputMediaPhoto(media=file_id, caption=caption, parse_mode="Markdown"), reply_markup=kb)
                 return
-            except Exception:
-                pass
-
+            except Exception: pass
         if carousel_msg_id and not file_id:
-            # Нет file_id для этого индекса — удаляем старое и шлём новое
             try:
                 await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
-            except Exception:
-                pass
-
-        # Отправляем новое фото и сохраняем file_id
-        msg = await bot.send_photo(
-            chat_id=chat_id,
-            photo=FSInputFile(img_path),
-            caption=caption,
-            parse_mode="Markdown",
-            reply_markup=kb
-        )
-        # Сохраняем file_id этой картинки
-        new_file_id = msg.photo[-1].file_id
-        carousel_file_ids[str(current)] = new_file_id
-        await state.update_data(
-            carousel_msg_id=msg.message_id,
-            carousel_file_ids=carousel_file_ids
-        )
+            except Exception: pass
+        msg = await bot.send_photo(chat_id=chat_id, photo=FSInputFile(img_path), caption=caption, parse_mode="Markdown", reply_markup=kb)
+        carousel_file_ids[str(current)] = msg.photo[-1].file_id
+        await state.update_data(carousel_msg_id=msg.message_id, carousel_file_ids=carousel_file_ids)
     else:
-        # Картинки нет — текстовое сообщение
         if carousel_msg_id:
             try:
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=carousel_msg_id,
-                    text=caption,
-                    parse_mode="Markdown",
-                    reply_markup=kb
-                )
+                await bot.edit_message_text(chat_id=chat_id, message_id=carousel_msg_id, text=caption, parse_mode="Markdown", reply_markup=kb)
                 return
             except Exception:
-                try:
-                    await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
-                except Exception:
-                    pass
-        msg = await bot.send_message(
-            chat_id=chat_id,
-            text=caption,
-            parse_mode="Markdown",
-            reply_markup=kb
-        )
+                try: await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
+                except Exception: pass
+        msg = await bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown", reply_markup=kb)
         await state.update_data(carousel_msg_id=msg.message_id)
 
 @dp.callback_query(Ritual.waiting_for_carousel, F.data.startswith("carousel_"))
 async def proc_carousel(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     action = callback.data.split("_")[1]
-    if action == "noop":
-        return
-    new_index = int(action)
+    if action == "noop": return
     data = await state.get_data()
-    amino = data.get("current_amino", "")
-    runes = data.get("current_runes", [])
-    await show_carousel(callback.message.chat.id, state, amino, runes, current=new_index)
+    await show_carousel(callback.message.chat.id, state, data.get("current_amino", ""), data.get("current_runes", []), current=int(action))
 
 @dp.callback_query(Ritual.waiting_for_carousel, F.data.startswith("rune_"))
 async def proc_rune_carousel(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
     chosen_index = int(callback.data.split("_")[1])
-    runes = data.get("current_runes", [])
-    amino = data.get("current_amino", "")
-    # Удаляем сообщение карусели
     carousel_msg_id = data.get("carousel_msg_id")
     if carousel_msg_id:
-        try:
-            await bot.delete_message(chat_id=callback.message.chat.id, message_id=carousel_msg_id)
-        except Exception:
-            pass
+        try: await bot.delete_message(chat_id=callback.message.chat.id, message_id=carousel_msg_id)
+        except Exception: pass
     await state.update_data(carousel_msg_id=None, carousel_file_ids={})
-    await save_rune_and_continue(callback.message, state, runes[chosen_index], amino)
+    await save_rune_and_continue(callback.message, state, data.get("current_runes", [])[chosen_index], data.get("current_amino", ""))
 
-# Оставляем старый обработчик выбора руны (на случай если где-то ещё используется)
 @dp.callback_query(Ritual.waiting_for_rune_choice, F.data.startswith("rune_"))
 async def proc_rune(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
@@ -470,6 +406,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
     runes = data.get('final_runes', []) + [rune]
     aminos = data.get('final_aminos', []) + [amino]
     complex_num = data.get('complex_num', 1)
+    
     if complex_num < 3:
         await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos)
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
@@ -484,17 +421,18 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         user_id = str(message.chat.id)
         user_data = db.get(user_id, {})
         now = datetime.now()
-        is_paid = user_data.get("paid", False)
         trial_end = datetime.fromisoformat(user_data.get("trial_end", now.isoformat()))
-        if is_paid or now < trial_end:
+        
+        if now < trial_end:
             aminos_encoded = urllib.parse.quote(",".join(aminos))
             web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(now.timestamp())}"
             kb_final = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))]])
+            time_left = trial_end - now
+            days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
+            
             final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада: **{' | '.join(runes)}**\n\n"
-            if not is_paid:
-                time_left = trial_end - now
-                days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
-                final_text += f"🎁 У вас идет бесплатный период (осталось дней: {days_left}). Чтобы расшифровать послание Салгын Кут и активировать силу рун, нажмите кнопку **ПОЛУЧИТЬ РЕЗУЛЬТАТЫ** ниже 👇"
+            final_text += f"🎁 У вас идет оплаченный период (осталось дней: {days_left}). Чтобы расшифровать послание Салгын Кут и активировать силу рун, нажмите кнопку **ПОЛУЧИТЬ РЕЗУЛЬТАТЫ** ниже 👇"
+            
             await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
             user_data["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
             db[user_id] = user_data
@@ -502,18 +440,40 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             await state.clear()
         else:
             await state.update_data(final_runes=runes, final_aminos=aminos)
-            await message.answer("🎉 **ОБРЯД ЗАВЕРШЕН!**\n\n⚠️ Ваш бесплатный 3-дневный период закончился.\n\nДля получения расшифровки и доступа в наше сообщество, пожалуйста, оплатите подписку:")
-            price = [LabeledPrice(label="Расшифровка и сообщество", amount=99000)]
-            await bot.send_invoice(
-                chat_id=message.chat.id,
-                title="Доступ к результатам",
-                description="Оплата расшифровки рун и вступление в клуб.",
-                payload="unlock_result",
-                provider_token=PAYMENT_TOKEN,
-                currency="RUB",
-                prices=price
-            )
+            
+            # --- ВЫВОД 3 КНОПОК ОПЛАТЫ ---
+            kb_pay = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 1 месяц — 990 ₽", callback_data="pay_1")],
+                [InlineKeyboardButton(text="💳 3 месяца — 2 490 ₽", callback_data="pay_3")],
+                [InlineKeyboardButton(text="💳 1 год — 9 990 ₽", callback_data="pay_12")]
+            ])
+            await message.answer("🎉 **ОБРЯД ЗАВЕРШЕН!**\n\n⚠️ Ваш период бесплатного доступа закончился.\n\nДля получения расшифровки, безлимитных обрядов и доступа в наше закрытое сообщество выберите подходящий тариф:", reply_markup=kb_pay)
             await state.set_state(Ritual.waiting_for_payment)
+
+# --- ОБРАБОТКА ВЫБРАННОГО ТАРИФА ---
+@dp.callback_query(Ritual.waiting_for_payment, F.data.startswith("pay_"))
+async def process_payment_selection(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    months = int(callback.data.split("_")[1])
+    
+    prices_map = {
+        1: ("Подписка на 1 месяц", 99000, "sub_1"),
+        3: ("Подписка на 3 месяца", 249000, "sub_3"),
+        12: ("Подписка на 1 год", 999000, "sub_12")
+    }
+    
+    label, amount, payload = prices_map[months]
+    price = [LabeledPrice(label=label, amount=amount)]
+    
+    await bot.send_invoice(
+        chat_id=callback.message.chat.id,
+        title="Доступ к результатам",
+        description=f"{label} и вступление в закрытый клуб.",
+        payload=payload,
+        provider_token=PAYMENT_TOKEN,
+        currency="RUB",
+        prices=price
+    )
 
 @dp.pre_checkout_query()
 async def pre_checkout_process(pre_checkout: PreCheckoutQuery):
@@ -523,25 +483,41 @@ async def pre_checkout_process(pre_checkout: PreCheckoutQuery):
 async def successful_payment(message: Message, state: FSMContext):
     payload = message.successful_payment.invoice_payload
     now = datetime.now()
-    if payload == "unlock_result":
+    
+    # Обрабатываем подписки (sub_1, sub_3, sub_12) или старый код unlock_result
+    if payload.startswith("sub_") or payload == "unlock_result":
+        months = 1
+        if payload == "sub_3": months = 3
+        elif payload == "sub_12": months = 12
+        
+        days_to_add = months * 30 if months < 12 else 365
+        
         db = load_db()
         user_id = str(message.chat.id)
         if user_id in db and isinstance(db[user_id], dict):
-            db[user_id]["paid"] = True
+            current_end = datetime.fromisoformat(db[user_id].get("trial_end", now.isoformat()))
+            # Если подписка уже кончилась - начинаем отсчет от сегодня. Если еще активна - прибавляем к остатку.
+            start_date = current_end if current_end > now else now
+            
+            db[user_id]["trial_end"] = (start_date + timedelta(days=days_to_add)).isoformat()
             db[user_id]["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
+            db[user_id]["notified"] = 0 # Сбрасываем счетчик, чтобы бот напомнил перед концом новой подписки!
             save_db(db)
+            
         data = await state.get_data()
         runes = data.get('final_runes', [])
         aminos = data.get('final_aminos', [])
         aminos_encoded = urllib.parse.quote(",".join(aminos))
         web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(now.timestamp())}"
+        
         kb_final = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))],
             [InlineKeyboardButton(text="💎 Вступить в сообщество", url="https://t.me/+SjHfMeVK4GA3N2Ey")]
         ])
-        final_text = f"✅ **Оплата прошла успешно! Добро пожаловать.**\n\nТвоя финальная триада: **{' | '.join(runes)}**\n\n👇 Нажмите на кнопку ниже, чтобы вступить в наше закрытое сообщество!"
+        final_text = f"✅ **Оплата прошла успешно! Добро пожаловать.**\n\nВаша подписка продлена на {days_to_add} дней.\nТвоя финальная триада: **{' | '.join(runes)}**\n\n👇 Нажмите на кнопку ниже, чтобы вступить в наше закрытое сообщество!"
         await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
         await state.clear()
+        
     elif payload == "pay_sticks":
         data = await state.get_data()
         order_data = data.get("pending_order", {})
