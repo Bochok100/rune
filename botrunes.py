@@ -120,19 +120,42 @@ def get_greeting_text(user_data, now):
             greeting += "⚠️ **Ваш 3-дневный бесплатный период окончен.**\nПройдите обряд, чтобы оплатить доступ к результатам и попасть в закрытое сообщество.\n\n"
     return greeting
 
+# Явная таблица: аминокислота -> список картинок по индексу руны
+# Порядок СТРОГО соответствует порядку рун в AMINO_ACIDS
+RUNE_IMAGES = {
+    "Аргинин":             ["Аргинин.jpg",            "Аргинин2.jpg"],
+    "Аланин":              ["Аланин.jpg",              "Аланин2.jpg",             "Аланин3.jpg",   "Аланин4.jpg"],
+    "Аспарагин":           ["Аспарагин.jpg"],
+    "Аспарагиновая к-та":  ["Аспарагиновая к-та.jpg", "Аспарагиновая к-та2.jpg"],
+    "Валин":               ["Валин.jpg",               "Валин2.jpg",              "Валин3.jpg"],
+    "Глютамин":            ["Глютамин.jpg",            "Глютамин2.jpg"],
+    "Глютаминовая к-та":   ["Глютаминовая к-та.jpg"],
+    "Гистидин":            ["Гистидин.jpg"],
+    "Глицин":              ["Глицин.jpg",              None,                      None],
+    "Стоп-кодон":          ["Стоповой кодон.jpg"],
+    "Изолейцин":           ["Изолейцин.jpg",           "Изолейцин2.jpg"],
+    "Лейцин":              ["Лейцин.jpg",              "Лейцин2.jpg"],
+    "Лизин":               ["Лизин.jpg"],
+    "Пирролизин":          ["Пирролизин.jpg"],
+    "Метионин":            ["Метионин.jpg"],
+    "Пролин":              ["Пролин.jpg"],
+    "Серин":               ["Серин.jpg",               "Серин2.jpg"],
+    "Триптофан":           ["Триптофан.jpg"],
+    "Тирозин":             ["Тирозин.jpg",             "Тирозин2.jpg"],
+    "Треонин":             ["Треонин.jpg",             "Треонин2.jpg",            "Треонин3.jpg",  "Треонин4.jpg"],
+    "Фенилаланин":         ["Фенилаланин.jpg",         "Фенилаланин 2.jpg"],
+    "Цистеин":             ["Цистеин.jpg",             None],
+    "Селеноцистеин":       ["Селеноцистеин.jpg"],
+}
+
 def find_rune_image(amino: str, index: int) -> str | None:
-    """Ищет картинку для руны по имени аминокислоты и индексу."""
-    search_names = [amino]
-    if amino == "Стоп-кодон":
-        search_names.append("Стоповой кодон")
-    suffixes = ["", "1", "_1", " 1"] if index == 0 else [f"{index+1}", f"_{index+1}", f" {index+1}"]
-    for s_name in search_names:
-        for suf in suffixes:
-            for ext in ['.jpg', '.png', '.jpeg', '.JPG', '.PNG']:
-                candidate = os.path.join("images", "runes", f"{s_name}{suf}{ext}")
-                if os.path.exists(candidate):
-                    return candidate
-    return None
+    """Возвращает путь к картинке для руны по явной таблице."""
+    files = RUNE_IMAGES.get(amino, [])
+    if index >= len(files) or files[index] is None:
+        return None
+    path = os.path.join("images", "runes", files[index])
+    return path if os.path.exists(path) else None
+
 
 def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
     """Кнопки карусели: ◀ номер/всего ▶ + Выбрать эту руну."""
