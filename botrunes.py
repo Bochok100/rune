@@ -102,7 +102,7 @@ def get_bottom_kb():
             ],
             [
                 KeyboardButton(text="💬 Отзывы", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/reviews.html")),
-                KeyboardButton(text="🤝 Пригласить друга") # <--- НОВАЯ КНОПКА
+                KeyboardButton(text="🤝 Пригласить друга")
             ]
         ],
         resize_keyboard=True,
@@ -117,7 +117,7 @@ def get_greeting_text(user_data, now):
     if now < trial_end:
         greeting += f"🎁 **У вас активно {days_left} дня доступа!**\n\n"
     else:
-        greeting += "⚠️ **Ваша подписка неактивна.**\nПройдите обряд, чтобы выбрать тариф и получить доступ к результатам и закрытому сообществу.\n\n"
+        greeting += "⚠️ **Ваша подписка неактивна.**\nПройдите обряд, чтобы выбрать тариф и получить доступ к результатам.\n\n"
     return greeting
 
 RUNE_IMAGES = {
@@ -237,7 +237,7 @@ async def reset_timer(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ Твой профиль сброшен. Напиши /start для новых 3-х дней тестов.", reply_markup=ReplyKeyboardRemove())
 
-# --- НОВЫЙ БЛОК: РЕФЕРАЛЬНАЯ ПРОГРАММА ---
+# --- РЕФЕРАЛЬНОЕ МЕНЮ (Убрали инфо про бонусы для друга) ---
 @dp.message(F.text == "🤝 Пригласить друга")
 async def referral_menu(message: Message):
     bot_info = await bot.get_me()
@@ -251,8 +251,7 @@ async def referral_menu(message: Message):
     text = (
         "🎁 **Реферальная программа**\n\n"
         "Приглашайте друзей и получайте бесплатные дни доступа к расшифровкам обрядов!\n\n"
-        "✨ **Что получаете вы:** `+3 дня` за каждого друга\n"
-        "✨ **Что получает друг:** `5 дней` бесплатного периода (вместо стандартных 3-х)\n\n"
+        "✨ **Ваш бонус:** `+3 дня` за каждого нового участника\n\n"
         f"👥 Вы уже пригласили: **{refs_count} чел.**\n\n"
         "🔗 **Ваша персональная ссылка:**\n"
         f"`{ref_link}`\n\n"
@@ -260,38 +259,31 @@ async def referral_menu(message: Message):
     )
     await message.answer(text, parse_mode="Markdown")
 
-# --- ОБНОВЛЕННЫЙ START (ЛОВИМ РЕФЕРАЛОВ) ---
+# --- СТАРТ (Начисляем другу стандартные 3 дня, а рефоводу бонус) ---
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
     db = load_db()
     user_id = str(message.from_user.id)
     now = datetime.now()
     
-    # Проверяем, пришел ли человек по рефералке
     args = command.args
     referrer_id = None
     if args and args.startswith("ref_"):
         referrer_id = args.split("_")[1]
 
-    # Если это абсолютно новый пользователь
     if user_id not in db or isinstance(db[user_id], str):
-        trial_days = 3
+        trial_days = 3 # Новичок получает стандартные 3 дня!
         
-        # Если пришел по рефке и не сам по своей
+        # Начисляем бонус ТОЛЬКО тому, кто пригласил (+3 дня)
         if referrer_id and referrer_id in db and referrer_id != user_id:
-            trial_days = 5 # Даем другу 5 дней вместо 3
-            
-            # Начисляем бонус тому, кто пригласил (+3 дня)
             ref_data = db[referrer_id]
             if isinstance(ref_data, dict):
                 ref_end = datetime.fromisoformat(ref_data.get("trial_end", now.isoformat()))
-                # Добавляем дни к текущему остатку (или от сегодня, если подписка истекла)
                 ref_start = ref_end if ref_end > now else now
                 db[referrer_id]["trial_end"] = (ref_start + timedelta(days=3)).isoformat()
                 db[referrer_id]["referrals_count"] = ref_data.get("referrals_count", 0) + 1
-                db[referrer_id]["notified"] = 0 # Сбрасываем счетчик уведомлений
+                db[referrer_id]["notified"] = 0 
                 
-                # Отправляем уведомление рефоводу
                 try:
                     await bot.send_message(
                         chat_id=int(referrer_id),
@@ -301,7 +293,6 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
                 except Exception:
                     pass
 
-        # Создаем профиль новичка
         db[user_id] = {
             "trial_end": (now + timedelta(days=trial_days)).isoformat(),
             "next_ritual_time": now.isoformat(),
@@ -330,17 +321,30 @@ async def start_ritual_handler(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await process_ritual_start(callback.message, state, str(callback.from_user.id))
 
+# --- ПРОВЕРКА 12 ЧАСОВ (ДОБАВЛЕНА РЕКЛАМА РЕФЕРАЛКИ) ---
 async def process_ritual_start(message: Message, state: FSMContext, user_id: str):
     db = load_db()
     user_data = db.get(user_id, {})
     now = datetime.now()
     next_ritual = datetime.fromisoformat(user_data.get("next_ritual_time", now.isoformat()))
+    
     if now < next_ritual:
         time_left = next_ritual - now
         hours, remainder = divmod(time_left.seconds, 3600)
         minutes, _ = divmod(remainder, 60)
-        await message.answer(f"⏳ Обряд уже проведен! Следующий будет доступен через {hours} ч. {minutes} мин.")
+        
+        bot_info = await bot.get_me()
+        ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+        
+        promo_text = (
+            f"⏳ Обряд уже проведен! Следующий будет доступен через {hours} ч. {minutes} мин.\n\n"
+            "🎁 **Как получить +3 дня доступа бесплатно?**\n"
+            "Пригласите друга по вашей ссылке:\n"
+            f"`{ref_link}`"
+        )
+        await message.answer(promo_text, parse_mode="Markdown")
         return
+        
     await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
@@ -465,6 +469,7 @@ async def proc_rune(callback: CallbackQuery, state: FSMContext):
     await callback.message.delete()
     await save_rune_and_continue(callback.message, state, data['current_runes'][int(callback.data.split("_")[1])], data['current_amino'])
 
+# --- КОНЕЦ ОБРЯДА (ОПЛАТА ИЛИ РЕКЛАМА РЕФЕРАЛКИ) ---
 async def save_rune_and_continue(message: Message, state: FSMContext, rune: str, amino: str):
     data = await state.get_data()
     runes = data.get('final_runes', []) + [rune]
@@ -505,12 +510,25 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         else:
             await state.update_data(final_runes=runes, final_aminos=aminos)
             
+            bot_info = await bot.get_me()
+            ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+
             kb_pay = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💳 1 месяц — 990 ₽", callback_data="pay_1")],
                 [InlineKeyboardButton(text="💳 3 месяца — 2 490 ₽", callback_data="pay_3")],
                 [InlineKeyboardButton(text="💳 1 год — 9 990 ₽", callback_data="pay_12")]
             ])
-            await message.answer("🎉 **ОБРЯД ЗАВЕРШЕН!**\n\n⚠️ Ваш период бесплатного доступа закончился.\n\nДля получения расшифровки, безлимитных обрядов и доступа в наше закрытое сообщество выберите подходящий тариф:", reply_markup=kb_pay)
+            
+            pay_text = (
+                "🎉 **ОБРЯД ЗАВЕРШЕН!**\n\n"
+                "⚠️ Ваш период бесплатного доступа закончился.\n\n"
+                "Для получения расшифровки, безлимитных обрядов и доступа в закрытое сообщество выберите подходящий тариф ниже:\n\n"
+                "💡 **Нет возможности оплатить?**\n"
+                "Пригласите друга по ссылке ниже и получите `+3 дня` бесплатного доступа за каждого!\n"
+                f"🔗 Ваша ссылка: `{ref_link}`"
+            )
+            
+            await message.answer(pay_text, reply_markup=kb_pay, parse_mode="Markdown")
             await state.set_state(Ritual.waiting_for_payment)
 
 @dp.callback_query(Ritual.waiting_for_payment, F.data.startswith("pay_"))
