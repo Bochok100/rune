@@ -1,690 +1,179 @@
-import asyncio
-import logging
-import json
-import os
-import urllib.parse
-from datetime import datetime, timedelta
-
-# --- ЖЕСТКАЯ ПРИВЯЗКА К ПАПКЕ ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-os.chdir(BASE_DIR)
-
-from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import (
-    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
-    FSInputFile, InputMediaPhoto, LabeledPrice, PreCheckoutQuery,
-    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-)
-from aiogram.types.web_app_info import WebAppInfo
-from aiogram.filters import CommandStart, Command, CommandObject
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State
-from aiogram.fsm.storage.redis import RedisStorage
-from redis.asyncio import Redis
-
-# --- УМНАЯ ЗАГРУЗКА ТОКЕНОВ ИЗ СЕЙФА ---
-load_dotenv(os.path.join(BASE_DIR, ".env"))
-
-raw_token = os.getenv("BOT_TOKEN")
-if not raw_token:
-    raise ValueError("❌ КРИТИЧЕСКАЯ ОШИБКА: Бот не видит токен! Проверьте файл .env")
-BOT_TOKEN = raw_token.strip().replace('"', '').replace("'", "")
-
-raw_payment = os.getenv("PAYMENT_TOKEN")
-PAYMENT_TOKEN = raw_payment.strip().replace('"', '').replace("'", "") if raw_payment else ""
-
-DB_FILE = "users_db.json"
-MY_ID = 297967650
-
-redis = Redis(host='localhost')
-storage = RedisStorage(redis=redis)
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=storage)
-
-BASE_MAP = {"1": "А", "2": "Ц", "3": "У", "4": "Г"}
-AMINO_ACIDS = {
-    "Аргинин": {"codons": ["ЦГЦ", "ЦГУ", "ЦГА", "ЦГГ", "АГА", "АГГ"], "runes": ["Ч", "Y"]},
-    "Аланин": {"codons": ["ГЦУ", "ГЦГ", "ГЦЦ", "ГЦА"], "runes": [")", "¥", "𐰉", "𐰈"]},
-    "Аспарагин": {"codons": ["ААУ", "ААЦ"], "runes": ["ʎ"]},
-    "Аспарагиновая к-та": {"codons": ["ГАУ", "ГАЦ"], "runes": ["*", "1"]},
-    "Валин": {"codons": ["ГУУ", "ГУЦ", "ГУА", "ГУГ"], "runes": ["𐰓", "9", "ς"]},
-    "Глютамин": {"codons": ["ЦАА", "ЦАГ"], "runes": ["Λ", "П"]},
-    "Глютаминовая к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
-    "Гистидин": {"codons": ["ЦАУ", "ЦАЦ"], "runes": ["𐰓"]},
-    "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺"]}, # ОСТАВИЛИ ТОЛЬКО ОДНУ РУНУ!
-    "Стоп-кодон": {"codons": ["УАА"], "runes": ["33"]},
-    "Изолейцин": {"codons": ["АУУ", "АУЦ", "АУА"], "runes": ["I|", "Є"]},
-    "Лейцин": {"codons": ["УУА", "УУГ", "ЦУУ", "ЦУЦ", "ЦУА", "ЦУГ"], "runes": ["Y", "J"]},
-    "Лизин": {"codons": ["ААА", "ААГ"], "runes": ["↑"]},
-    "Пирролизин": {"codons": ["УАГ"], "runes": ["ᛟ"]},
-    "Метионин": {"codons": ["АУГ"], "runes": ["Г"]},
-    "Пролин": {"codons": ["ЦЦУ", "ЦЦГ", "ЦЦЦ", "ЦЦА"], "runes": ["ᛉ"]},
-    "Серин": {"codons": ["УЦУ", "УЦГ", "УЦЦ", "УЦА", "АГУ", "АГЦ"], "runes": ["D", "☺"]},
-    "Триптофан": {"codons": ["УГГ"], "runes": ["⌂"]},
-    "Тирозин": {"codons": ["УАУ", "УАЦ"], "runes": ["ᛒ", "ᛃ"]},
-    "Треонин": {"codons": ["АЦУ", "АЦГ", "АЦЦ", "АЦА"], "runes": ["ㅋ", "N", "◁", "F"]},
-    "Фенилаланин": {"codons": ["УУУ", "УУЦ"], "runes": ["X", "|"]},
-    "Цистеин": {"codons": ["УГУ", "УГЦ"], "runes": ["︽", "h"]},
-    "Селеноцистеин": {"codons": ["УГА"], "runes": ["M"]}
-}
-
-class Ritual(StatesGroup):
-    waiting_for_blue = State()
-    waiting_for_green = State()
-    waiting_for_red = State()
-    waiting_for_rune_choice = State()
-    waiting_for_carousel = State()
-    waiting_for_payment = State()
-
-def load_db():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r") as f: return json.load(f)
-    return {}
-
-def save_db(data):
-    with open(DB_FILE, "w") as f: json.dump(data, f)
-
-def get_main_menu_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📖 Об авторе", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/author.html"))],
-        [InlineKeyboardButton(text="📜 История метода", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/method.html"))],
-        [InlineKeyboardButton(text="🌬️ Буор, Ийэ и Салгын Кут", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/kut.html"))],
-        [InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]
-    ])
-
-def get_bottom_kb():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="🔮 Начать обряд"),
-                KeyboardButton(text="🕯 Подготовка", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/prep.html"))
-            ],
-            [
-                KeyboardButton(text="💬 Отзывы", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/reviews.html")),
-                KeyboardButton(text="🤝 Пригласить друга")
-            ]
-        ],
-        resize_keyboard=True,
-        is_persistent=True 
-    )
-
-def get_greeting_text(user_data, now):
-    trial_end = datetime.fromisoformat(user_data.get("trial_end", now.isoformat()))
-    time_left = trial_end - now
-    days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
-    greeting = "Приветствую. Это Ваш цифровой помощник в достижении гармонии. Используем мудрость салгын кут и силу рунических символов, чтобы помочь вам восполнить утраченный ресурс.\n\n"
-    if now < trial_end:
-        greeting += f"🎁 **У вас активно {days_left} дня доступа!**\n\n"
-    else:
-        greeting += "⚠️ **Ваша подписка неактивна.**\nПройдите обряд, чтобы выбрать тариф и получить доступ к результатам.\n\n"
-    return greeting
-
-# =========================================================
-# === ИДЕАЛЬНЫЙ СЛОВАРЬ (С твоими новыми перестановками) ===
-# =========================================================
-RUNE_IMAGES = {
-    "Аргинин":             ["Аргинин2.jpg",             "Аргинин.jpg"],               # Поменяли местами
-    "Аланин":              ["Аланин4.jpg",              "Аланин3.jpg",              "Аланин2.jpg",   "Аланин.jpg"], # 4 на 1, 3 на 2, остальное зеркально
-    "Аспарагин":           ["Аспарагин.jpg"],
-    "Аспарагиновая к-та":  ["Аспарагиновая к-та.jpg", "Аспарагиновая к-та2.jpg"],
-    "Валин":               ["Валин2.jpg",               "Валин3.jpg",               "Валин.jpg"], # Сдвинули по твоей схеме
-    "Глютамин":            ["Глютамин.jpg",            "Глютамин2.jpg"],
-    "Глютаминовая к-та":   ["Глютаминовая к-та.jpg"],
-    "Гистидин":            ["Гистидин.jpg"],
-    "Глицин":              ["Глицин.jpg"],                                           # Только одна картинка
-    "Стоп-кодон":          ["Стоповой кодон.jpg"],
-    "Изолейцин":           ["Изолейцин2.jpg",           "Изолейцин.jpg"],             # Поменяли местами
-    "Лейцин":              ["Лейцин.jpg",              "Лейцин2.jpg"],
-    "Лизин":               ["Лизин.jpg"],
-    "Пирролизин":          ["Пирролизин.jpg"],
-    "Метионин":            ["Метионин.jpg"],
-    "Пролин":              ["Пролин.jpg"],
-    "Серин":               ["Серин.jpg",               "Серин2.jpg"],
-    "Триптофан":           ["Триптофан.jpg"],
-    "Тирозин":             ["Тирозин.jpg",             "Тирозин2.jpg"],
-    "Треонин":             ["Треонин.jpg",             "Треонин2.jpg",             "Треонин3.jpg",  "Треонин4.jpg"],
-    "Фенилаланин":         ["Фенилаланин.jpg",         "Фенилаланин 2.jpg"],
-    "Цистеин":             ["Цистеин.jpg",             "Цистеин.jpg"],               # Заглушка
-    "Селеноцистеин":       ["Селеноцистеин.jpg"],
-}
-
-def find_rune_image(amino: str, index: int) -> str | None:
-    files = RUNE_IMAGES.get(amino, [])
-    if not files:
-        return None
-    if index >= len(files) or files[index] is None:
-        img_name = files[0]
-    else:
-        img_name = files[index]
-        
-    path = os.path.join("images", "runes", img_name)
-    return path if os.path.exists(path) else None
-
-def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
-    nav_row = []
-    if total > 1:
-        prev_i = (current - 1) % total
-        next_i = (current + 1) % total
-        nav_row = [
-            InlineKeyboardButton(text="◀", callback_data=f"carousel_{prev_i}"),
-            InlineKeyboardButton(text=f"{current+1}/{total}", callback_data="carousel_noop"),
-            InlineKeyboardButton(text="▶", callback_data=f"carousel_{next_i}"),
-        ]
-    return InlineKeyboardMarkup(inline_keyboard=[
-        nav_row,
-        [InlineKeyboardButton(text=f"✅ Выбрать эту руну", callback_data=f"rune_{current}")]
-    ] if nav_row else [
-        [InlineKeyboardButton(text=f"✅ Выбрать эту руну", callback_data=f"rune_{current}")]
-    ])
-
-@dp.message(Command("check_images"))
-async def cmd_check_images(message: Message):
-    if message.from_user.id != MY_ID: return
-    
-    report = "📊 **Отчет по картинкам рун:**\n\n"
-    missing = []
-    found = 0
-    
-    for amino, files in RUNE_IMAGES.items():
-        for img in files:
-            path = os.path.join("images", "runes", img)
-            if not os.path.exists(path):
-                if img not in missing: missing.append(img)
-            else:
-                found += 1
-                
-    report += f"✅ Найдено файлов: {found}\n"
-    report += f"❌ Отсутствует: {len(missing)}\n\n"
-    if missing:
-        report += "⚠️ **Не найдены файлы:**\n" + "\n".join(missing)
-    else:
-        report += "🎉 **Все картинки на месте!**"
-        
-    await message.answer(report, parse_mode="Markdown")
-
-@dp.message(Command("show_images"))
-async def cmd_show_images(message: Message):
-    if message.from_user.id != MY_ID: return
-    
-    await message.answer("🔍 Начинаю выгрузку всех картинок...\nСравни символ на фото с символом в тексте!")
-    
-    for amino, files in RUNE_IMAGES.items():
-        for i, img in enumerate(files):
-            path = os.path.join("images", "runes", img)
-            runes_list = AMINO_ACIDS[amino]["runes"]
-            rune_symbol = runes_list[i] if i < len(runes_list) else "?"
-            
-            if os.path.exists(path):
-                caption = f"🧪 Аминокислота: **{amino}**\n📁 Файл: `{img}`\n🔮 На фото должна быть руна: **{rune_symbol}**"
-                try:
-                    await bot.send_photo(chat_id=message.chat.id, photo=FSInputFile(path), caption=caption, parse_mode="Markdown")
-                    await asyncio.sleep(0.5)
-                except Exception as e:
-                    pass
-    await message.answer("✅ Выгрузка завершена!")
-
-async def daily_notifier():
-    while True:
-        db = load_db()
-        now = datetime.now()
-        changed = False
-        for user_id, data in db.items():
-            if isinstance(data, str): continue
-            trial_end = datetime.fromisoformat(data['trial_end'])
-            time_left = trial_end - now
-            days_left = int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0)
-            notified = data.get('notified', 0)
-            try:
-                if days_left == 2 and notified == 0:
-                    await bot.send_message(chat_id=int(user_id), text="⏳ **Напоминание:** У вас осталось 2 дня доступа к обрядам рун!", parse_mode="Markdown")
-                    data['notified'] = 1
-                    changed = True
-                elif days_left == 1 and notified == 1:
-                    await bot.send_message(chat_id=int(user_id), text="⏳ **Напоминание:** Завтра заканчивается ваш период доступа! Успейте провести обряд.", parse_mode="Markdown")
-                    data['notified'] = 2
-                    changed = True
-                elif days_left <= 0 and notified == 2:
-                    await bot.send_message(chat_id=int(user_id), text="⚠️ **Ваш период подписки завершен!**\n\nВы можете продлить доступ, пройдя новый обряд. 🔮", parse_mode="Markdown")
-                    data['notified'] = 3
-                    changed = True
-            except Exception: pass
-        if changed: save_db(db)
-        await asyncio.sleep(3600)
-
-@dp.message(F.web_app_data)
-async def web_app_data_handler(message: Message, state: FSMContext):
-    try:
-        data = json.loads(message.web_app_data.data)
-        if data.get("type") == "order_sticks":
-            await state.update_data(pending_order=data)
-            admin_pending_text = (
-                "⏳ **НОВАЯ ЗАЯВКА (Ожидает оплаты)** ⏳\n\n"
-                f"👤 **Имя:** {data['fio']}\n"
-                f"📞 **Телефон:** {data['phone']}\n"
-                f"🚚 **Способ:** {data['delivery']}\n"
-                f"📍 **Адрес:** {data['address']}\n"
-                f"💵 **Сумма к оплате:** {data['price']} руб.\n\n"
-                f"💬 *Клиенту выставлен счет. Ждем поступления средств...*"
-            )
-            await bot.send_message(chat_id=MY_ID, text=admin_pending_text, parse_mode="Markdown")
-            price_rub = data.get("price", 400)
-            prices = [LabeledPrice(label=f"Набор палочек ({data['delivery']})", amount=price_rub * 100)]
-            await bot.send_invoice(
-                chat_id=message.chat.id,
-                title="Заказ четырехгранных палочек",
-                description=f"Оплата инвентаря для обряда.\nСпособ получения: {data['delivery']}.",
-                payload="pay_sticks",
-                provider_token=PAYMENT_TOKEN,
-                currency="RUB",
-                prices=prices
-            )
-    except Exception as e:
-        logging.error(f"Ошибка обработки заказа формы: {e}")
-
-@dp.message(F.text == "/reset")
-async def reset_timer(message: Message, state: FSMContext):
-    db = load_db()
-    user_id = str(message.from_user.id)
-    if user_id in db: del db[user_id]
-    save_db(db)
-    await state.clear()
-    await message.answer("✅ Твой профиль сброшен. Напиши /start для новых 3-х дней тестов.", reply_markup=ReplyKeyboardRemove())
-
-@dp.message(F.text == "🤝 Пригласить друга")
-async def referral_menu(message: Message):
-    bot_info = await bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start=ref_{message.from_user.id}"
-    
-    db = load_db()
-    user_id = str(message.from_user.id)
-    user_data = db.get(user_id, {})
-    refs_count = user_data.get("referrals_count", 0)
-    
-    text = (
-        "🎁 **Реферальная программа**\n\n"
-        "Приглашайте друзей и получайте бесплатные дни доступа к расшифровкам обрядов!\n\n"
-        "✨ **Ваш бонус:** `+3 дня` за каждого нового участника\n\n"
-        f"👥 Вы уже пригласили: **{refs_count} чел.**\n\n"
-        "🔗 **Ваша персональная ссылка:**\n"
-        f"`{ref_link}`\n\n"
-        "_(Нажмите на ссылку, чтобы скопировать и отправьте её друзьям)_"
-    )
-    await message.answer(text, parse_mode="Markdown")
-
-@dp.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
-    db = load_db()
-    user_id = str(message.from_user.id)
-    now = datetime.now()
-    
-    args = command.args
-    referrer_id = None
-    if args and args.startswith("ref_"):
-        referrer_id = args.split("_")[1]
-
-    if user_id not in db or isinstance(db[user_id], str):
-        trial_days = 3 
-        
-        if referrer_id and referrer_id in db and referrer_id != user_id:
-            ref_data = db[referrer_id]
-            if isinstance(ref_data, dict):
-                ref_end = datetime.fromisoformat(ref_data.get("trial_end", now.isoformat()))
-                ref_start = ref_end if ref_end > now else now
-                db[referrer_id]["trial_end"] = (ref_start + timedelta(days=3)).isoformat()
-                db[referrer_id]["referrals_count"] = ref_data.get("referrals_count", 0) + 1
-                db[referrer_id]["notified"] = 0 
-                
-                try:
-                    await bot.send_message(
-                        chat_id=int(referrer_id),
-                        text="🎉 **По вашей ссылке присоединился новый участник!**\nВам начислено `+3 дня` доступа к боту 🎁",
-                        parse_mode="Markdown"
-                    )
-                except Exception:
-                    pass
-
-        db[user_id] = {
-            "trial_end": (now + timedelta(days=trial_days)).isoformat(),
-            "next_ritual_time": now.isoformat(),
-            "notified": 0,
-            "paid": False,
-            "referrer": referrer_id if referrer_id else None,
-            "referrals_count": 0
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Расшифровка Обряда</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            padding: 16px; 
+            background-color: var(--tg-theme-bg-color, #1a1a1a); 
+            color: var(--tg-theme-text-color, #ffffff); 
+            line-height: 1.5; 
+            margin: 0;
         }
-        save_db(db)
+        
+        h1 { text-align: center; font-size: 22px; margin-bottom: 20px; font-weight: 700; }
+        
+        .card { 
+            background-color: var(--tg-theme-secondary-bg-color, #242424); 
+            border-radius: 16px; 
+            margin-bottom: 16px; 
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
+            border: 1px solid rgba(255,255,255,0.03); 
+            cursor: pointer; 
+            transition: background-color 0.2s;
+        }
+        .card:active { background-color: rgba(255, 255, 255, 0.05); }
 
-    await state.clear()
-    caption = get_greeting_text(db[user_id], now)
+        .accordion-header {
+            padding: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .accordion-header h2 { 
+            color: var(--tg-theme-button-color, #5288c1); 
+            font-size: 18px; 
+            margin: 0; 
+            font-weight: 700; 
+        }
+        .arrow { 
+            transition: transform 0.3s ease; 
+            font-size: 14px; 
+            color: var(--tg-theme-button-color, #5288c1);
+        }
+        .card.active .arrow { transform: rotate(180deg); }
+
+        .accordion-content {
+            max-height: 0; 
+            overflow: hidden; 
+            opacity: 0;
+            transition: all 0.4s ease-in-out; 
+            padding: 0 16px;
+        }
+        .card.active .accordion-content {
+            max-height: 3000px; 
+            opacity: 1;
+            padding: 0 16px 16px 16px;
+        }
+
+        .amino-block { display: flex; gap: 16px; align-items: flex-start; }
+        .amino-img { width: 80px; height: 80px; border-radius: 12px; object-fit: cover; border: 2px solid var(--tg-theme-button-color, #5288c1); box-shadow: 0 4px 8px rgba(0,0,0,0.2); flex-shrink: 0; }
+        .amino-text { flex-grow: 1; margin: 0; font-size: 14px; opacity: 0.9; }
+
+        .instruction { margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px; }
+        .instruction h2 { color: #e0a96d; font-size: 18px; margin: 0 0 10px 0;}
+        .instruction .card { cursor: default; padding: 16px; }
+        ul { padding-left: 20px; margin-top: 5px; }
+        li { margin-bottom: 5px; font-size: 14px; opacity: 0.9; }
+        p { margin: 0 0 10px 0; font-size: 14px; opacity: 0.9; }
+    </style>
+</head>
+<body>
+
+    <h1>🔮 Ваша расшифровка</h1>
     
-    if os.path.exists("gif1_v2.mp4"):
-        await message.answer_animation(animation=FSInputFile("gif1_v2.mp4"), caption=caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
-    else:
-        await message.answer(caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
-    await message.answer("👇 Для начала работы используйте меню ниже:", reply_markup=get_bottom_kb())
+    <div id="content">Обработка данных...</div>
 
-@dp.message(F.text == "🔮 Начать обряд")
-async def start_ritual_text_handler(message: Message, state: FSMContext):
-    await process_ritual_start(message, state, str(message.from_user.id))
+    <div class="instruction">
+        <h1 style="text-align:center; font-size: 20px;">Проведение ритуала</h1>
 
-@dp.callback_query(F.data == "start_ritual")
-async def start_ritual_handler(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await process_ritual_start(callback.message, state, str(callback.from_user.id))
+        <div class="card">
+            <h2>🕯 Работа с огнем</h2>
+            <p>Возьмите полоску бумаги левой рукой за чистый левый край, на котором нет рун. Зажгите свечу.</p>
+            <p>Начиная с первой руны, расположенной с правого края полоски, последовательно сожгите все три руны.</p>
+            <p><i>Достаточно, чтобы сгорели сами рунические знаки.</i></p>
+            <p>После этого положите бумагу на заранее подготовленную негорючую поверхность и дайте ей погаснуть.</p>
+        </div>
 
-async def process_ritual_start(message: Message, state: FSMContext, user_id: str):
-    db = load_db()
-    user_data = db.get(user_id, {})
-    now = datetime.now()
-    next_ritual = datetime.fromisoformat(user_data.get("next_ritual_time", now.isoformat()))
-    
-    if now < next_ritual:
-        time_left = next_ritual - now
-        hours, remainder = divmod(time_left.seconds, 3600)
-        minutes, _ = divmod(remainder, 60)
-        
-        bot_info = await bot.get_me()
-        ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
-        
-        promo_text = (
-            f"⏳ Обряд уже проведен! Следующий будет доступен через {hours} ч. {minutes} мин.\n\n"
-            "🎁 **Как получить +3 дня доступа бесплатно?**\n"
-            "Пригласите друга по вашей ссылке:\n"
-            f"`{ref_link}`"
-        )
-        await message.answer(promo_text, parse_mode="Markdown")
-        return
-        
-    await state.update_data(complex_num=1, final_runes=[], final_aminos=[], final_images=[])
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
-    caption = "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
-    if os.path.exists("gif2_v2.mp4"):
-        await message.answer_animation(animation=FSInputFile("gif2_v2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
-    else:
-        await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
-    await state.set_state(Ritual.waiting_for_blue)
+        <div class="card">
+            <h2>🌬 Завершение</h2>
+            <p>Оставшуюся часть бумаги можно выбросить, а образовавшуюся сажу можно смыть водой в раковину или развеять по ветру через окно.</p>
+        </div>
 
-@dp.callback_query(Ritual.waiting_for_blue, F.data.startswith("throw_"))
-async def proc_blue(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.update_data(blue=callback.data.split("_")[1])
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🟢 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
-    caption = "Теперь посмотри на **ЗЕЛЕНУЮ** грань. Сколько точек?"
-    if callback.message.animation or callback.message.video or callback.message.photo:
-        await callback.message.edit_caption(caption=caption, parse_mode="Markdown", reply_markup=kb)
-    else:
-        await callback.message.edit_text(text=caption, parse_mode="Markdown", reply_markup=kb)
-    await state.set_state(Ritual.waiting_for_green)
+        <div class="card" style="background: rgba(77, 171, 247, 0.05); border: 1px dashed #4dabf7;">
+            <h2>🌌 Традиционное значение</h2>
+            <p>Практика основана на традиционных представлениях народа саха о трёх составляющих человека — три Кут. Данный метод направлен на работу с <b>Салгын Кут</b> (воздушной составляющей).</p>
+            <p>В рамках традиционного мировоззрения считается, что через такую работу человек помогает восстановить внутреннюю гармонию и восполнить недостающие качества, символически связанные с полученными рунами и рекомендациями.</p>
+            <p style="font-size: 11px; color: var(--tg-theme-hint-color, #888); margin-top: 10px;">Данная практика относится к духовным традициям и не заменяет медицинские рекомендации специалистов.</p>
+        </div>
+    </div>
 
-@dp.callback_query(Ritual.waiting_for_green, F.data.startswith("throw_"))
-async def proc_green(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.update_data(green=callback.data.split("_")[1])
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔴 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
-    caption = "Теперь посмотри на **КРАСНУЮ** грань. Сколько точек?"
-    if callback.message.animation or callback.message.video or callback.message.photo:
-        await callback.message.edit_caption(caption=caption, parse_mode="Markdown", reply_markup=kb)
-    else:
-        await callback.message.edit_text(text=caption, parse_mode="Markdown", reply_markup=kb)
-    await state.set_state(Ritual.waiting_for_red)
+    <script>
+        try {
+            window.Telegram.WebApp.expand();
 
-@dp.callback_query(Ritual.waiting_for_red, F.data.startswith("throw_"))
-async def proc_red(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    data = await state.get_data()
-    red_val = callback.data.split("_")[1]
-    triplet = BASE_MAP[red_val] + BASE_MAP[data['green']] + BASE_MAP[data['blue']]
+            const descriptions = {
+                "Аланин": "Аланин — важный источник энергии для мышечных тканей, головного мозга и центральной нервной системы. Укрепляет иммунную систему путем участия в обмене сахаров и органических кислот, а также помогает организму преобразовывать глюкозу в энергию.",
+                "Аргинин": "Аргинин — условно-незаменимая аминокислота. Играет важную роль в делении клеток, восстановлении после травм, выведении шлаков и поддержании иммунной функции. Улучшает кровообращение.",
+                "Аспарагин": "Аспарагин — аминокислота, необходимая для поддержания баланса в процессах, происходящих в центральной нервной системе. Участвует в синтезе аммиака и помогает организму справляться с усталостью.",
+                "Стоп-кодон": "Стоп-кодон — это сигнал остановки и фиксации. В контексте обряда означает завершение определенного этапа, закрепление результата или необходимую паузу для осмысления.",
+                "Аспарагиновая к-та": "Аспарагиновая кислота — играет важную роль в синтезе аммиака, повышает сопротивляемость усталости, участвует в преобразовании углеводов в мышечную энергию. За счет повышения продукции иммуноглобулинов и антител стимулирует иммунитет. Также аспарагиновая кислота необходима для поддержания баланса в процессах, происходящих в центральной нервной системе; препятствует как чрезмерному возбуждению, так и излишнему торможению.",
+                "Валин": "Валин - незаменимая аминокислота, оказывающая стимулирующее действие, одна из аминокислот ВСАА, поэтому может быть использована мышцами в качестве источника энергии. Валин необходим для метаболизма в мышцах, восстановления поврежденных тканей и для поддержания нормального обмена азота в организме. Валин часто используют для коррекции выраженных дефицитов аминокислот, в результате привыкания к лекарствам. Его чрезмерно высокий уровень в организме может привести к таким симптомам, как парестезии (ощущение мурашек на коже), вплоть до галлюцинаций. Прием валина в виде пищевых добавок следует сбалансировать приемом других разветвленных аминокислот ВСАА - L-лейцина и L-изолейцина.",
+                "Глютамин": "Глютамин - это аминокислота, наиболее часто встречающаяся в мышцах в свободном виде. Он очень легко проникает через гематоэнцефалический барьер и в клетках головного мозга переходит в глютаминовую кислоту и обратно, кроме того увеличивает количество гамма-аминомасляной кислоты, которая необходима для поддержания нормальной работы головного мозга. Эта аминокислота также поддерживает нормальное кислотно-щелочное равновесие в организме и здоровое состояние желудочно-кишечного тракта, необходим для синтеза ДНК и РНК.<br><br>Глютамин - активный участник азотного обмена. Его молекула содержит два атома азота и образуется из глютаминовой кислоты путем присоединения одного атома азота. Синтез глютамина помогает удалить избыток аммиака из тканей, прежде всего из головного мозга.<br>Глютамин находится в больших количествах в мышцах и используется для синтеза белков клеток скелетной мускулатуры. Применяется культуристами, при диетах, после операций и для профилактики потери мышечной массы.",
+                "Глютаминовая к-та": "Глютаминовая кислота является нейромедиатором, передающим импульсы в центральной нервной системе. Эта аминокислота играет важную роль в углеводном обмене и способствует проникновению кальция через гематоэнцефалический барьер. Может использоваться клетками головного мозга в качестве источника энергии. Она также обезвреживает аммиак, отнимая атомы азота в процессе образования другой аминокислоты - глютамина.<br>Применяют при коррекции расстройств поведения у детей, а также при лечении эпилепсии, мышечной дистрофии, язв, гипогликемических состояний, осложнений инсулинотерапии сахарного диабета и нарушений умственного развития.",
+                "Гистидин": "Гистидин - это незаменимая аминокислота, способствующая росту и восстановлению тканей, которая входит в состав миелиновых оболочек, защищающих нервные клетки, а также необходима для образования красных и белых клеток крови. Гистидин защищает организм от повреждающего действия радиации, способствует выведению тяжелых металлов из организма. Слишком высокое содержание гистидина может привести к возникновению стресса и психических нарушений.<br>Гистамин, очень важный компонент многих иммунологических реакций, синтезируется из гистидина. Он также способствует возникновению полового возбуждения.",
+                "Глицин": "Глицин замедляет дегенерацию мышечной ткани, так как является источником креатина. Глицин необходим для синтеза нуклеиновых кислот, желчных кислот и заменимых аминокислот в организме. Он входит в состав многих антацидных препаратов, полезен для восстановления поврежденных тканей, так как в больших количествах содержится в коже и соединительной ткани. Эта аминокислота необходима для нормального функционирования центральной нервной системы и поддержки хорошего состояния предстательной железы.",
+                "Изолейцин": "Изолейцин - одна из аминокислот ВСАА и незаменимых аминокислот, необходимых для синтеза гемоглобина. Также стабилизирует и регулирует уровень сахара в крови и процессы энергообеспечения. Метаболизм изолейцина происходит в мышечной ткани. Совместный прием с валином и лейцином увеличивает выносливость и способствуют восстановлению мышечной ткани, что особенно важно для спортсменов.",
+                "Лейцин": "Лейцин - незаменимая аминокислота, вместе с изолейцином и валином относящаяся к трем разветвленным аминокислотам ВСАА. Действуя вместе, они защищают мышечные ткани и являются источниками энергии, а также способствуют восстановлению костей, кожи, мышц, поэтому их прием часто рекомендуют в восстановительный период после травм и операций.",
+                "Лизин": "Лизин - незаменимая аминокислота, входящая в состав практически любых белков. Он необходим для нормального формирования костей и роста детей, способствует усвоению кальция и поддержанию нормального обмена азота у взрослых. Эта аминокислота участвует в синтезе антител, гормонов, ферментов, формировании коллагена и восстановлении тканей.<br>Лизин оказывает противовирусное действие, особенно в отношении вирусов, вызывающих герпес и острые респираторные инфекции.",
+                "Пирролизин": "Пирролизин представляет собой 22-ю аминокислоту, закодированную генетически. Является производным аминокислоты лизина и кодируется кодоном UAG. Обычно этот кодон выполняет роль стоп-кодона, но если встречается в открытой рамке считывания, за ним следуют другие стоп-кодоны.",
+                "Метионин": "Метионин - незаменимая аминокислота, помогающая переработке жиров, предотвращая их отложение в печени и на стенках артерий. Синтез таурина и цистеина зависит от количества метионина в организме. Эта аминокислота способствует пищеварению, обеспечивает дезинтоксикационные процессы, защищает от воздействия радиации, полезна при остеопорозе.<br>Метионин оказывает выраженное антиоксидантное действие, так как является хорошим источником серы, инактивирующей свободные радикалы.",
+                "Пролин": "Пролин улучшает состояние кожи, за счет увеличения продукции коллагена и уменьшения его потери с возрастом. Помогает в восстановлении хрящевых поверхностей суставов, укрепляет связки и сердечную мышцу.",
+                "Серин": "Серин необходим для нормального обмена жиров и жирных кислот, роста мышечной ткани и поддержания нормального состояния иммунной системы. Синтезируется в организме из глицина. В качестве увлажняющего вещества входит в состав многих косметических продуктов.<br>Важная аминокислота для производства клеточной энергии - участвует в запасании печенью и мышцами гликогена; активно участвует в укреплении иммунной системы.",
+                "Триптофан": "Триптофан - это незаменимая аминокислота, необходимая для продукции ниацина. Он используется для синтеза в головном мозге серотонина, одного из важнейших нейромедиаторов. Триптофан применяют при бессоннице, депрессии и для стабилизации настроения.",
+                "Тирозин": "Тирозин является предшественником нейромедиаторов норэпинефрина и дофамина. Участвует в регуляции настроения; недостаток приводит к депрессии. Тирозин подавляет аппетит, способствует уменьшению отложения жиров, способствует выработке мелатонина и улучшает функции надпочечников.",
+                "Цистеин": "Цистеин очень нестабилен и легко переходит в L-цистин. Обе аминокислоты относятся к серосодержащим и играют важную роль в процессах формирования тканей кожи, имеют значение для дезинтоксикационных процессов.<br>Ускоряет процессы выздоровления при заболеваниях органов дыхания и играет важную роль в активизации лейкоцитов.",
+                "Селеноцистеин": "Селеноцистеин - нестандартная «двадцать первая» аминокислота, отличающаяся от обычного цистеина тем, что вместо атома серы в ее состав входит атом селена. Белки, содержащие селеноцистеин, называют селенопротеинами.<br>Самая важная функция селеноцистина - транспортировка селена по всему организму.",
+                "Треонин": "Треонин - это незаменимая аминокислота, способствующая поддержанию нормального белкового обмена в организме. Важна для синтеза коллагена и эластина, помогает работе печени и участвует в обмене жиров.<br>Стимулирует иммунитет. Очень в незначительных количествах содержится в зернах.",
+                "Фенилаланин": "Фенилаланин — аминокислота, которая служит предшественником для выработки таких биологически активных веществ, как норадреналин, который повышает уровень бодрствования и физическую энергию. Влияет на уровень эндорфинов - «гормонов радости»."
+            };
 
-    amino, runes = "Неизвестно", []
-    for name, a_data in AMINO_ACIDS.items():
-        if triplet in a_data["codons"]:
-            amino, runes = name, a_data["runes"]
-            break
-
-    await state.update_data(current_runes=runes, current_amino=amino)
-    await callback.message.delete()
-
-    if not runes:
-        await bot.send_message(chat_id=callback.message.chat.id, text=f"Триплет {triplet} не найден.")
-        return
-
-    if len(runes) == 1:
-        await save_rune_and_continue(callback.message, state, runes[0], amino, 0)
-        return
-
-    await show_carousel(callback.message.chat.id, state, amino, runes, current=0)
-    await state.set_state(Ritual.waiting_for_carousel)
-
-async def show_carousel(chat_id: int, state: FSMContext, amino: str, runes: list, current: int):
-    total = len(runes)
-    rune_symbol = runes[current]
-    img_path = find_rune_image(amino, current)
-    kb = make_carousel_kb(current, total)
-
-    await state.update_data(carousel_index=current)
-    caption = f"🧬 **{amino}**\n🔮 Руна: **{rune_symbol}**\n\n_{current+1} из {total} — листайте ◀ ▶ и выберите нужную_"
-    data = await state.get_data()
-    carousel_msg_id = data.get("carousel_msg_id")
-    carousel_file_ids = data.get("carousel_file_ids", {})
-
-    if img_path:
-        file_id = carousel_file_ids.get(str(current))
-        if carousel_msg_id and file_id:
-            try:
-                await bot.edit_message_media(chat_id=chat_id, message_id=carousel_msg_id, media=InputMediaPhoto(media=file_id, caption=caption, parse_mode="Markdown"), reply_markup=kb)
-                return
-            except Exception: pass
-        if carousel_msg_id and not file_id:
-            try:
-                await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
-            except Exception: pass
-        msg = await bot.send_photo(chat_id=chat_id, photo=FSInputFile(img_path), caption=caption, parse_mode="Markdown", reply_markup=kb)
-        carousel_file_ids[str(current)] = msg.photo[-1].file_id
-        await state.update_data(carousel_msg_id=msg.message_id, carousel_file_ids=carousel_file_ids)
-    else:
-        if carousel_msg_id:
-            try:
-                await bot.edit_message_text(chat_id=chat_id, message_id=carousel_msg_id, text=caption, parse_mode="Markdown", reply_markup=kb)
-                return
-            except Exception:
-                try: await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
-                except Exception: pass
-        msg = await bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown", reply_markup=kb)
-        await state.update_data(carousel_msg_id=msg.message_id)
-
-@dp.callback_query(Ritual.waiting_for_carousel, F.data.startswith("carousel_"))
-async def proc_carousel(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    action = callback.data.split("_")[1]
-    if action == "noop": return
-    data = await state.get_data()
-    await show_carousel(callback.message.chat.id, state, data.get("current_amino", ""), data.get("current_runes", []), current=int(action))
-
-@dp.callback_query(Ritual.waiting_for_carousel, F.data.startswith("rune_"))
-async def proc_rune_carousel(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    data = await state.get_data()
-    chosen_index = int(callback.data.split("_")[1])
-    carousel_msg_id = data.get("carousel_msg_id")
-    if carousel_msg_id:
-        try: await bot.delete_message(chat_id=callback.message.chat.id, message_id=carousel_msg_id)
-        except Exception: pass
-    await state.update_data(carousel_msg_id=None, carousel_file_ids={})
-    await save_rune_and_continue(callback.message, state, data.get("current_runes", [])[chosen_index], data.get("current_amino", ""), chosen_index)
-
-@dp.callback_query(Ritual.waiting_for_rune_choice, F.data.startswith("rune_"))
-async def proc_rune(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    data = await state.get_data()
-    await callback.message.delete()
-    chosen_index = int(callback.data.split("_")[1])
-    await save_rune_and_continue(callback.message, state, data['current_runes'][chosen_index], data['current_amino'], chosen_index)
-
-async def save_rune_and_continue(message: Message, state: FSMContext, rune: str, amino: str, chosen_index: int = 0):
-    data = await state.get_data()
-    runes = data.get('final_runes', []) + [rune]
-    aminos = data.get('final_aminos', []) + [amino]
-    
-    images_list = data.get('final_images', [])
-    files = RUNE_IMAGES.get(amino, [])
-    if chosen_index < len(files) and files[chosen_index] is not None:
-        img_filename = files[chosen_index]
-    else:
-        img_filename = files[0] if files else f"{amino}.jpg"
-    images_list.append(img_filename)
-
-    complex_num = data.get('complex_num', 1)
-    
-    if complex_num < 3:
-        await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos, final_images=images_list)
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
-        caption = f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** СИНЯЯ грань:"
-        if os.path.exists("gif2_v2.mp4"):
-            await message.answer_animation(animation=FSInputFile("gif2_v2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
-        else:
-            await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
-        await state.set_state(Ritual.waiting_for_blue)
-    else:
-        db = load_db()
-        user_id = str(message.chat.id)
-        user_data = db.get(user_id, {})
-        now = datetime.now()
-        trial_end = datetime.fromisoformat(user_data.get("trial_end", now.isoformat()))
-        
-        aminos_encoded = urllib.parse.quote(",".join(aminos))
-        images_encoded = urllib.parse.quote(",".join(images_list))
-        web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&images={images_encoded}&v={int(now.timestamp())}"
-        
-        if now < trial_end:
-            kb_final = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))]])
-            time_left = trial_end - now
-            days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
+            const params = new URLSearchParams(window.location.search);
+            const aminosParam = params.get('aminos');
+            const imagesParam = params.get('images'); 
             
-            final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада: **{' | '.join(runes)}**\n\n"
-            final_text += f"🎁 У вас идет оплаченный период (осталось дней: {days_left}). Чтобы расшифровать послание Салгын Кут и активировать силу рун, нажмите кнопку **ПОЛУЧИТЬ РЕЗУЛЬТАТЫ** ниже 👇"
-            
-            await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
-            user_data["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
-            db[user_id] = user_data
-            save_db(db)
-            await state.clear()
-        else:
-            await state.update_data(final_runes=runes, final_aminos=aminos, final_images=images_list)
-            
-            bot_info = await bot.get_me()
-            ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+            let html = "";
 
-            kb_pay = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💳 1 месяц — 990 ₽", callback_data="pay_1")],
-                [InlineKeyboardButton(text="💳 3 месяца — 2 490 ₽", callback_data="pay_3")],
-                [InlineKeyboardButton(text="💳 1 год — 9 990 ₽", callback_data="pay_12")]
-            ])
-            
-            pay_text = (
-                "🎉 **ОБРЯД ЗАВЕРШЕН!**\n\n"
-                "⚠️ Ваш период бесплатного доступа закончился.\n\n"
-                "Для получения расшифровки, безлимитных обрядов и доступа в закрытое сообщество выберите подходящий тариф ниже:\n\n"
-                "💡 **Нет возможности оплатить?**\n"
-                "Пригласите друга по ссылке ниже и получите `+3 дня` бесплатного доступа за каждого!\n"
-                f"🔗 Ваша ссылка: `{ref_link}`"
-            )
-            
-            await message.answer(pay_text, reply_markup=kb_pay, parse_mode="Markdown")
-            await state.set_state(Ritual.waiting_for_payment)
+            if (aminosParam) {
+                const aminos = aminosParam.split(',');
+                const imagesList = imagesParam ? imagesParam.split(',') : [];
+                // ВЗЛОМЩИК КЭША (чтобы всегда грузило свежие картинки)
+                const cacheBuster = new Date().getTime(); 
+                
+                aminos.forEach((amino, index) => {
+                    let desc = descriptions[amino] || "Описание параметров аминокислоты находится в разработке.";
+                    let imgFile = imagesList[index] ? imagesList[index] : `${amino}.jpg`;
+                    
+                    // ДОБАВЛЕН ?v=${cacheBuster} к ссылке на картинку!
+                    let imgSrc = `images/runes/${imgFile}?v=${cacheBuster}`;
+                    
+                    html += `
+                        <div class="card" onclick="this.classList.toggle('active')">
+                            <div class="accordion-header">
+                                <h2>${index + 1}. ${amino}</h2>
+                                <span class="arrow">▼</span>
+                            </div>
+                            <div class="accordion-content">
+                                <div class="amino-block">
+                                    <img src="${imgSrc}" class="amino-img" onerror="this.style.display='none';">
+                                    <p class="amino-text">${desc}</p>
+                                </div>
+                            </div>
+                        </div>`;
+                });
+            } else {
+                html = "<p style='text-align:center;'>Данные для расшифровки не найдены.</p>";
+            }
 
-@dp.callback_query(Ritual.waiting_for_payment, F.data.startswith("pay_"))
-async def process_payment_selection(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    months = int(callback.data.split("_")[1])
-    
-    prices_map = {
-        1: ("Подписка на 1 месяц", 99000, "sub_1"),
-        3: ("Подписка на 3 месяца", 249000, "sub_3"),
-        12: ("Подписка на 1 год", 999000, "sub_12")
-    }
-    
-    label, amount, payload = prices_map[months]
-    price = [LabeledPrice(label=label, amount=amount)]
-    
-    await bot.send_invoice(
-        chat_id=callback.message.chat.id,
-        title="Доступ к результатам",
-        description=f"{label} и вступление в закрытый клуб.",
-        payload=payload,
-        provider_token=PAYMENT_TOKEN,
-        currency="RUB",
-        prices=price
-    )
+            document.getElementById('content').innerHTML = html;
 
-@dp.pre_checkout_query()
-async def pre_checkout_process(pre_checkout: PreCheckoutQuery):
-    await bot.answer_pre_checkout_query(pre_checkout.id, ok=True)
-
-@dp.message(F.successful_payment)
-async def successful_payment(message: Message, state: FSMContext):
-    payload = message.successful_payment.invoice_payload
-    now = datetime.now()
-    
-    if payload.startswith("sub_") or payload == "unlock_result":
-        months = 1
-        if payload == "sub_3": months = 3
-        elif payload == "sub_12": months = 12
-        
-        days_to_add = months * 30 if months < 12 else 365
-        
-        db = load_db()
-        user_id = str(message.chat.id)
-        if user_id in db and isinstance(db[user_id], dict):
-            current_end = datetime.fromisoformat(db[user_id].get("trial_end", now.isoformat()))
-            start_date = current_end if current_end > now else now
-            
-            db[user_id]["trial_end"] = (start_date + timedelta(days=days_to_add)).isoformat()
-            db[user_id]["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
-            db[user_id]["notified"] = 0 
-            save_db(db)
-            
-        data = await state.get_data()
-        runes = data.get('final_runes', [])
-        aminos = data.get('final_aminos', [])
-        images_list = data.get('final_images', [])
-        
-        aminos_encoded = urllib.parse.quote(",".join(aminos))
-        images_encoded = urllib.parse.quote(",".join(images_list))
-        web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&images={images_encoded}&v={int(now.timestamp())}"
-        
-        kb_final = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))],
-            [InlineKeyboardButton(text="💎 Вступить в сообщество", url="https://t.me/+SjHfMeVK4GA3N2Ey")]
-        ])
-        final_text = f"✅ **Оплата прошла успешно! Добро пожаловать.**\n\nВаша подписка продлена на {days_to_add} дней.\nТвоя финальная триада: **{' | '.join(runes)}**\n\n👇 Нажмите на кнопку ниже, чтобы вступить в наше закрытое сообщество!"
-        await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
-        await state.clear()
-        
-    elif payload == "pay_sticks":
-        data = await state.get_data()
-        order_data = data.get("pending_order", {})
-        fio = order_data.get("fio", "Не указано")
-        phone = order_data.get("phone", "Не указано")
-        delivery = order_data.get("delivery", "Не указано")
-        address = order_data.get("address", "-")
-        admin_text = (
-            "✅ 💰 **ЗАКАЗ ПАЛОЧЕК УСПЕШНО ОПЛАЧЕН!** 💰 ✅\n\n"
-            f"👤 **Покупатель:** {fio}\n"
-            f"📞 **Телефон:** {phone}\n"
-            f"🚚 **Способ:** {delivery}\n"
-            f"📍 **Адрес:** {address}\n\n"
-            f"💬 *Деньги получены. Свяжитесь с клиентом для отправки заказа!*"
-        )
-        await bot.send_message(chat_id=MY_ID, text=admin_text, parse_mode="Markdown")
-        await message.answer("🎉 **Поздравляем с приобретением!**\nОплата прошла успешно. Скоро с вами свяжутся, или вы можете написать напрямую: @daayakh")
-        await state.update_data(pending_order=None)
-
-async def main():
-    os.makedirs("images/amino", exist_ok=True)
-    os.makedirs("images/runes", exist_ok=True)
-    await bot.delete_webhook(drop_pending_updates=True)
-    asyncio.create_task(daily_notifier())
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        } catch (err) {
+            document.getElementById('content').innerHTML = "<p style='color:red;'>Ошибка загрузки данных: " + err.message + "</p>";
+        }
+    </script>
+</body>
+</html>
