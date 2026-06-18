@@ -52,7 +52,7 @@ AMINO_ACIDS = {
     "Глютамин": {"codons": ["ЦАА", "ЦАГ"], "runes": ["Λ", "П"]},
     "Глютаминовая к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
     "Гистидин": {"codons": ["ЦАУ", "ЦАЦ"], "runes": ["𐰓"]},
-    "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺"]}, # ОСТАВИЛИ ТОЛЬКО ОДНУ РУНУ!
+    "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺"]}, 
     "Стоп-кодон": {"codons": ["УАА"], "runes": ["33"]},
     "Изолейцин": {"codons": ["АУУ", "АУЦ", "АУА"], "runes": ["I|", "Є"]},
     "Лейцин": {"codons": ["УУА", "УУГ", "ЦУУ", "ЦУЦ", "ЦУА", "ЦУГ"], "runes": ["Y", "J"]},
@@ -120,21 +120,18 @@ def get_greeting_text(user_data, now):
         greeting += "⚠️ **Ваша подписка неактивна.**\nПройдите обряд, чтобы выбрать тариф и получить доступ к результатам.\n\n"
     return greeting
 
-# =========================================================
-# === ИДЕАЛЬНЫЙ СЛОВАРЬ (С твоими новыми перестановками) ===
-# =========================================================
 RUNE_IMAGES = {
-    "Аргинин":             ["Аргинин2.jpg",             "Аргинин.jpg"],               # Поменяли местами
-    "Аланин":              ["Аланин4.jpg",              "Аланин3.jpg",              "Аланин2.jpg",   "Аланин.jpg"], # 4 на 1, 3 на 2, остальное зеркально
+    "Аргинин":             ["Аргинин2.jpg",             "Аргинин.jpg"],               
+    "Аланин":              ["Аланин4.jpg",              "Аланин3.jpg",              "Аланин2.jpg",   "Аланин.jpg"], 
     "Аспарагин":           ["Аспарагин.jpg"],
     "Аспарагиновая к-та":  ["Аспарагиновая к-та.jpg", "Аспарагиновая к-та2.jpg"],
-    "Валин":               ["Валин2.jpg",               "Валин3.jpg",               "Валин.jpg"], # Сдвинули по твоей схеме
+    "Валин":               ["Валин2.jpg",               "Валин3.jpg",               "Валин.jpg"], 
     "Глютамин":            ["Глютамин.jpg",            "Глютамин2.jpg"],
     "Глютаминовая к-та":   ["Глютаминовая к-та.jpg"],
     "Гистидин":            ["Гистидин.jpg"],
-    "Глицин":              ["Глицин.jpg"],                                           # Только одна картинка
+    "Глицин":              ["Глицин.jpg"],                                           
     "Стоп-кодон":          ["Стоповой кодон.jpg"],
-    "Изолейцин":           ["Изолейцин2.jpg",           "Изолейцин.jpg"],             # Поменяли местами
+    "Изолейцин":           ["Изолейцин2.jpg",           "Изолейцин.jpg"],             
     "Лейцин":              ["Лейцин.jpg",              "Лейцин2.jpg"],
     "Лизин":               ["Лизин.jpg"],
     "Пирролизин":          ["Пирролизин.jpg"],
@@ -145,7 +142,7 @@ RUNE_IMAGES = {
     "Тирозин":             ["Тирозин.jpg",             "Тирозин2.jpg"],
     "Треонин":             ["Треонин.jpg",             "Треонин2.jpg",             "Треонин3.jpg",  "Треонин4.jpg"],
     "Фенилаланин":         ["Фенилаланин.jpg",         "Фенилаланин 2.jpg"],
-    "Цистеин":             ["Цистеин.jpg",             "Цистеин.jpg"],               # Заглушка
+    "Цистеин":             ["Цистеин.jpg",             "Цистеин.jpg"],               
     "Селеноцистеин":       ["Селеноцистеин.jpg"],
 }
 
@@ -181,11 +178,9 @@ def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
 @dp.message(Command("check_images"))
 async def cmd_check_images(message: Message):
     if message.from_user.id != MY_ID: return
-    
     report = "📊 **Отчет по картинкам рун:**\n\n"
     missing = []
     found = 0
-    
     for amino, files in RUNE_IMAGES.items():
         for img in files:
             path = os.path.join("images", "runes", img)
@@ -193,64 +188,123 @@ async def cmd_check_images(message: Message):
                 if img not in missing: missing.append(img)
             else:
                 found += 1
-                
-    report += f"✅ Найдено файлов: {found}\n"
-    report += f"❌ Отсутствует: {len(missing)}\n\n"
-    if missing:
-        report += "⚠️ **Не найдены файлы:**\n" + "\n".join(missing)
-    else:
-        report += "🎉 **Все картинки на месте!**"
-        
+    report += f"✅ Найдено файлов: {found}\n❌ Отсутствует: {len(missing)}\n\n"
+    if missing: report += "⚠️ **Не найдены файлы:**\n" + "\n".join(missing)
+    else: report += "🎉 **Все картинки на месте!**"
     await message.answer(report, parse_mode="Markdown")
 
 @dp.message(Command("show_images"))
 async def cmd_show_images(message: Message):
     if message.from_user.id != MY_ID: return
-    
     await message.answer("🔍 Начинаю выгрузку всех картинок...\nСравни символ на фото с символом в тексте!")
-    
     for amino, files in RUNE_IMAGES.items():
         for i, img in enumerate(files):
             path = os.path.join("images", "runes", img)
             runes_list = AMINO_ACIDS[amino]["runes"]
             rune_symbol = runes_list[i] if i < len(runes_list) else "?"
-            
             if os.path.exists(path):
                 caption = f"🧪 Аминокислота: **{amino}**\n📁 Файл: `{img}`\n🔮 На фото должна быть руна: **{rune_symbol}**"
                 try:
                     await bot.send_photo(chat_id=message.chat.id, photo=FSInputFile(path), caption=caption, parse_mode="Markdown")
                     await asyncio.sleep(0.5)
-                except Exception as e:
-                    pass
+                except Exception: pass
     await message.answer("✅ Выгрузка завершена!")
 
+# =====================================================================
+# === ГЛАВНЫЙ МОДУЛЬ УВЕДОМЛЕНИЙ (САМЫЙ ВАЖНЫЙ БЛОК ДЛЯ МАРКЕТИНГА) ===
+# =====================================================================
 async def daily_notifier():
+    
+    # Календарь особых дат (месяц-день)
+    SPECIAL_DAYS = {
+        "06-21": "☀️ Сегодня день летнего солнцестояния.\nРекомендуется выполнить расклад.",
+        "12-21": "❄️ Сегодня день зимнего солнцестояния.\nРекомендуется выполнить расклад.",
+        "03-20": "🌱 Сегодня день весеннего равноденствия.\nРекомендуется выполнить расклад.",
+        "09-22": "🍁 Сегодня день осеннего равноденствия.\nРекомендуется выполнить расклад."
+    }
+
     while True:
         db = load_db()
         now = datetime.now()
+        today_str = now.strftime("%m-%d")
         changed = False
+        
         for user_id, data in db.items():
             if isinstance(data, str): continue
+            
+            # --- Инициализация переменных для старых пользователей ---
+            if 'notified_12h' not in data: data['notified_12h'] = False
+            if 'ritual_step' not in data: data['ritual_step'] = 0
+            if 'last_active' not in data: data['last_active'] = now.isoformat()
+            if 'notified_incomplete' not in data: data['notified_incomplete'] = False
+            if 'notified_inactive' not in data: data['notified_inactive'] = False
+            if 'special_day_notified' not in data: data['special_day_notified'] = ""
+            
             trial_end = datetime.fromisoformat(data['trial_end'])
-            time_left = trial_end - now
-            days_left = int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0)
-            notified = data.get('notified', 0)
+            next_ritual = datetime.fromisoformat(data['next_ritual_time'])
+            last_active = datetime.fromisoformat(data['last_active'])
+            
+            time_to_end = trial_end - now
+            days_left = int(time_to_end.total_seconds() / 86400) + (1 if time_to_end.total_seconds() % 86400 > 0 else 0)
+            sub_notified = data.get('notified', 0)
+            
             try:
-                if days_left == 2 and notified == 0:
-                    await bot.send_message(chat_id=int(user_id), text="⏳ **Напоминание:** У вас осталось 2 дня доступа к обрядам рун!", parse_mode="Markdown")
+                # 1. ОСНОВНОЕ НАПОМИНАНИЕ (ЧЕРЕЗ 12 ЧАСОВ)
+                if now >= next_ritual and not data['notified_12h']:
+                    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]])
+                    await bot.send_message(
+                        chat_id=int(user_id), 
+                        text="🌬️ Сегодня доступен новый расклад.\n\nПодготовьте палочки и выполните практику.",
+                        reply_markup=kb
+                    )
+                    data['notified_12h'] = True
+                    data['notified_inactive'] = False # Обнуляем счетчик застоя
+                    changed = True
+
+                # 2. НАПОМИНАНИЕ О НЕЗАВЕРШЕННОМ РАСКЛАДЕ (ЕСЛИ ПРОШЕЛ 1 ЧАС)
+                if data['ritual_step'] > 0 and (now - last_active).total_seconds() > 3600 and not data['notified_incomplete']:
+                    step = data['ritual_step'] - 1 # 1-й шаг это 0 бросков, 2-й шаг это 1 бросок и тд.
+                    await bot.send_message(
+                        chat_id=int(user_id), 
+                        text=f"Вы выполнили только {step} из 3 бросков.\n\nЗавершите сегодняшний расклад."
+                    )
+                    data['notified_incomplete'] = True
+                    changed = True
+
+                # 3. НАПОМИНАНИЯ О ПОДПИСКЕ (За 3 дня и за 1 день)
+                if days_left == 3 and sub_notified < 1:
+                    await bot.send_message(int(user_id), "⚠️ Ваша подписка заканчивается через 3 дня.")
                     data['notified'] = 1
                     changed = True
-                elif days_left == 1 and notified == 1:
-                    await bot.send_message(chat_id=int(user_id), text="⏳ **Напоминание:** Завтра заканчивается ваш период доступа! Успейте провести обряд.", parse_mode="Markdown")
+                elif days_left == 1 and sub_notified < 2:
+                    await bot.send_message(int(user_id), "⏳ Остался 1 день доступа.")
                     data['notified'] = 2
                     changed = True
-                elif days_left <= 0 and notified == 2:
-                    await bot.send_message(chat_id=int(user_id), text="⚠️ **Ваш период подписки завершен!**\n\nВы можете продлить доступ, пройдя новый обряд. 🔮", parse_mode="Markdown")
+                elif days_left <= 0 and sub_notified < 3:
+                    await bot.send_message(int(user_id), "🔒 Ваша подписка завершена.\nВы можете продлить доступ, пройдя новый обряд.")
                     data['notified'] = 3
                     changed = True
-            except Exception: pass
+
+                # 4. ВОЗВРАТ ПОЛЬЗОВАТЕЛЯ (ЕСЛИ ПРОШЛО 7 ДНЕЙ)
+                if now >= next_ritual + timedelta(days=7) and not data['notified_inactive']:
+                    await bot.send_message(
+                        int(user_id), 
+                        "Вы давно не выполняли расклад.\n\nВозможно, сегодня подходящий день вернуться к практике."
+                    )
+                    data['notified_inactive'] = True
+                    changed = True
+
+                # 5. ОСОБЫЕ ДНИ (ПРАЗДНИКИ/СОЛНЦЕСТОЯНИЯ)
+                if today_str in SPECIAL_DAYS and data['special_day_notified'] != today_str:
+                    await bot.send_message(int(user_id), SPECIAL_DAYS[today_str])
+                    data['special_day_notified'] = today_str
+                    changed = True
+
+            except Exception as e:
+                logging.error(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
+                
         if changed: save_db(db)
-        await asyncio.sleep(3600)
+        await asyncio.sleep(3600) # Бот проверяет всех пользователей 1 раз в час
 
 @dp.message(F.web_app_data)
 async def web_app_data_handler(message: Message, state: FSMContext):
@@ -350,7 +404,13 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             "notified": 0,
             "paid": False,
             "referrer": referrer_id if referrer_id else None,
-            "referrals_count": 0
+            "referrals_count": 0,
+            "ritual_step": 0,
+            "last_active": now.isoformat(),
+            "notified_incomplete": False,
+            "notified_12h": False,
+            "notified_inactive": False,
+            "special_day_notified": ""
         }
         save_db(db)
 
@@ -395,6 +455,13 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
         await message.answer(promo_text, parse_mode="Markdown")
         return
         
+    # ФИКСИРУЕМ СТАРТ ОБРЯДА
+    user_data['ritual_step'] = 1
+    user_data['last_active'] = now.isoformat()
+    user_data['notified_incomplete'] = False
+    db[user_id] = user_data
+    save_db(db)
+
     await state.update_data(complex_num=1, final_runes=[], final_aminos=[], final_images=[])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
@@ -535,7 +602,19 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
 
     complex_num = data.get('complex_num', 1)
     
+    db = load_db()
+    user_id = str(message.chat.id)
+    user_data = db.get(user_id, {})
+    now = datetime.now()
+    
     if complex_num < 3:
+        # ОБНОВЛЯЕМ ШАГ
+        user_data['ritual_step'] = complex_num + 1
+        user_data['last_active'] = now.isoformat()
+        user_data['notified_incomplete'] = False
+        db[user_id] = user_data
+        save_db(db)
+
         await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos, final_images=images_list)
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
         caption = f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** СИНЯЯ грань:"
@@ -545,12 +624,15 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
         await state.set_state(Ritual.waiting_for_blue)
     else:
-        db = load_db()
-        user_id = str(message.chat.id)
-        user_data = db.get(user_id, {})
-        now = datetime.now()
+        # ОБРЯД ЗАВЕРШЕН — ОБНУЛЯЕМ ШАГ
+        user_data["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
+        user_data["ritual_step"] = 0
+        user_data["notified_12h"] = False
+        user_data["notified_incomplete"] = False
+        db[user_id] = user_data
+        save_db(db)
+
         trial_end = datetime.fromisoformat(user_data.get("trial_end", now.isoformat()))
-        
         aminos_encoded = urllib.parse.quote(",".join(aminos))
         images_encoded = urllib.parse.quote(",".join(images_list))
         web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&images={images_encoded}&v={int(now.timestamp())}"
@@ -564,9 +646,6 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             final_text += f"🎁 У вас идет оплаченный период (осталось дней: {days_left}). Чтобы расшифровать послание Салгын Кут и активировать силу рун, нажмите кнопку **ПОЛУЧИТЬ РЕЗУЛЬТАТЫ** ниже 👇"
             
             await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
-            user_data["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
-            db[user_id] = user_data
-            save_db(db)
             await state.clear()
         else:
             await state.update_data(final_runes=runes, final_aminos=aminos, final_images=images_list)
