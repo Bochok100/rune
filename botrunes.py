@@ -237,7 +237,6 @@ async def reset_timer(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ Твой профиль сброшен. Напиши /start для новых 3-х дней тестов.", reply_markup=ReplyKeyboardRemove())
 
-# --- РЕФЕРАЛЬНОЕ МЕНЮ (Убрали инфо про бонусы для друга) ---
 @dp.message(F.text == "🤝 Пригласить друга")
 async def referral_menu(message: Message):
     bot_info = await bot.get_me()
@@ -259,7 +258,6 @@ async def referral_menu(message: Message):
     )
     await message.answer(text, parse_mode="Markdown")
 
-# --- СТАРТ (Начисляем другу стандартные 3 дня, а рефоводу бонус) ---
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
     db = load_db()
@@ -272,9 +270,8 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         referrer_id = args.split("_")[1]
 
     if user_id not in db or isinstance(db[user_id], str):
-        trial_days = 3 # Новичок получает стандартные 3 дня!
+        trial_days = 3 
         
-        # Начисляем бонус ТОЛЬКО тому, кто пригласил (+3 дня)
         if referrer_id and referrer_id in db and referrer_id != user_id:
             ref_data = db[referrer_id]
             if isinstance(ref_data, dict):
@@ -321,7 +318,6 @@ async def start_ritual_handler(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await process_ritual_start(callback.message, state, str(callback.from_user.id))
 
-# --- ПРОВЕРКА 12 ЧАСОВ (ДОБАВЛЕНА РЕКЛАМА РЕФЕРАЛКИ) ---
 async def process_ritual_start(message: Message, state: FSMContext, user_id: str):
     db = load_db()
     user_data = db.get(user_id, {})
@@ -345,7 +341,8 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
         await message.answer(promo_text, parse_mode="Markdown")
         return
         
-    await state.update_data(complex_num=1, final_runes=[], final_aminos=[])
+    # Очищаем данные от прошлых запусков! ВАЖНО: очищаем final_images
+    await state.update_data(complex_num=1, final_runes=[], final_aminos=[], final_images=[])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
     if os.path.exists("gif2_v2.mp4"):
@@ -398,8 +395,9 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
         await bot.send_message(chat_id=callback.message.chat.id, text=f"Триплет {triplet} не найден.")
         return
 
+    # ПЕРЕДАЕМ ИНДЕКС 0 ДЛЯ АМИНОКИСЛОТ С ОДНОЙ РУНОЙ
     if len(runes) == 1:
-        await save_rune_and_continue(callback.message, state, runes[0], amino)
+        await save_rune_and_continue(callback.message, state, runes[0], amino, 0)
         return
 
     await show_carousel(callback.message.chat.id, state, amino, runes, current=0)
@@ -454,30 +452,45 @@ async def proc_carousel(callback: CallbackQuery, state: FSMContext):
 async def proc_rune_carousel(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
+    # ПОЛУЧАЕМ ИНДЕКС ВЫБРАННОЙ КАРТИНКИ
     chosen_index = int(callback.data.split("_")[1])
     carousel_msg_id = data.get("carousel_msg_id")
     if carousel_msg_id:
         try: await bot.delete_message(chat_id=callback.message.chat.id, message_id=carousel_msg_id)
         except Exception: pass
     await state.update_data(carousel_msg_id=None, carousel_file_ids={})
-    await save_rune_and_continue(callback.message, state, data.get("current_runes", [])[chosen_index], data.get("current_amino", ""))
+    # ПЕРЕДАЕМ ИНДЕКС
+    await save_rune_and_continue(callback.message, state, data.get("current_runes", [])[chosen_index], data.get("current_amino", ""), chosen_index)
 
 @dp.callback_query(Ritual.waiting_for_rune_choice, F.data.startswith("rune_"))
 async def proc_rune(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
     await callback.message.delete()
-    await save_rune_and_continue(callback.message, state, data['current_runes'][int(callback.data.split("_")[1])], data['current_amino'])
+    # ПОЛУЧАЕМ ИНДЕКС
+    chosen_index = int(callback.data.split("_")[1])
+    await save_rune_and_continue(callback.message, state, data['current_runes'][chosen_index], data['current_amino'], chosen_index)
 
-# --- КОНЕЦ ОБРЯДА (ОПЛАТА ИЛИ РЕКЛАМА РЕФЕРАЛКИ) ---
-async def save_rune_and_continue(message: Message, state: FSMContext, rune: str, amino: str):
+# --- ПРИНИМАЕМ ИНДЕКС И СОХРАНЯЕМ ТОЧНОЕ ИМЯ КАРТИНКИ ---
+async def save_rune_and_continue(message: Message, state: FSMContext, rune: str, amino: str, chosen_index: int = 0):
     data = await state.get_data()
     runes = data.get('final_runes', []) + [rune]
     aminos = data.get('final_aminos', []) + [amino]
+    
+    # 🌟 ВОТ ОНО! Сохраняем имя конкретного файла, который был в карусели
+    images_list = data.get('final_images', [])
+    files = RUNE_IMAGES.get(amino, [])
+    if chosen_index < len(files) and files[chosen_index] is not None:
+        img_filename = files[chosen_index]
+    else:
+        img_filename = f"{amino}.jpg" # Запасной вариант
+    images_list.append(img_filename)
+
     complex_num = data.get('complex_num', 1)
     
     if complex_num < 3:
-        await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos)
+        # Обновляем стейт с новыми картинками
+        await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos, final_images=images_list)
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
         caption = f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** СИНЯЯ грань:"
         if os.path.exists("gif2_v2.mp4"):
@@ -492,9 +505,12 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         now = datetime.now()
         trial_end = datetime.fromisoformat(user_data.get("trial_end", now.isoformat()))
         
+        # 🌟 ПЕРЕДАЕМ ИМЕНА КАРТИНОК В ССЫЛКУ!
+        aminos_encoded = urllib.parse.quote(",".join(aminos))
+        images_encoded = urllib.parse.quote(",".join(images_list))
+        web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&images={images_encoded}&v={int(now.timestamp())}"
+        
         if now < trial_end:
-            aminos_encoded = urllib.parse.quote(",".join(aminos))
-            web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(now.timestamp())}"
             kb_final = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))]])
             time_left = trial_end - now
             days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
@@ -508,7 +524,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             save_db(db)
             await state.clear()
         else:
-            await state.update_data(final_runes=runes, final_aminos=aminos)
+            await state.update_data(final_runes=runes, final_aminos=aminos, final_images=images_list)
             
             bot_info = await bot.get_me()
             ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
@@ -522,7 +538,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             pay_text = (
                 "🎉 **ОБРЯД ЗАВЕРШЕН!**\n\n"
                 "⚠️ Ваш период бесплатного доступа закончился.\n\n"
-                "Для получения расшифровки, безлимитных обрядов и доступа в закрытое сообщество выберите подходящий тариф ниже:\n\n"
+                "Для получения расшифровки, безлимитных обрядов и доступа в закры сообщество выберите подходящий тариф ниже:\n\n"
                 "💡 **Нет возможности оплатить?**\n"
                 "Пригласите друга по ссылке ниже и получите `+3 дня` бесплатного доступа за каждого!\n"
                 f"🔗 Ваша ссылка: `{ref_link}`"
@@ -585,8 +601,12 @@ async def successful_payment(message: Message, state: FSMContext):
         data = await state.get_data()
         runes = data.get('final_runes', [])
         aminos = data.get('final_aminos', [])
+        images_list = data.get('final_images', [])
+        
+        # Передаем обновленные данные в URL
         aminos_encoded = urllib.parse.quote(",".join(aminos))
-        web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&v={int(now.timestamp())}"
+        images_encoded = urllib.parse.quote(",".join(images_list))
+        web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&images={images_encoded}&v={int(now.timestamp())}"
         
         kb_final = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📖 Получить результаты", web_app=WebAppInfo(url=web_app_url))],
