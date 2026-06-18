@@ -120,6 +120,7 @@ def get_greeting_text(user_data, now):
         greeting += "⚠️ **Ваша подписка неактивна.**\nПройдите обряд, чтобы выбрать тариф и получить доступ к результатам.\n\n"
     return greeting
 
+# --- ИДЕАЛЬНЫЙ СЛОВАРЬ (Защищен от ошибок None) ---
 RUNE_IMAGES = {
     "Аргинин":             ["Аргинин.jpg",             "Аргинин2.jpg"],
     "Аланин":              ["Аланин.jpg",              "Аланин2.jpg",              "Аланин3.jpg",   "Аланин4.jpg"],
@@ -129,7 +130,7 @@ RUNE_IMAGES = {
     "Глютамин":            ["Глютамин.jpg",            "Глютамин2.jpg"],
     "Глютаминовая к-та":   ["Глютаминовая к-та.jpg"],
     "Гистидин":            ["Гистидин.jpg"],
-    "Глицин":              ["Глицин.jpg",              None,                       None],
+    "Глицин":              ["Глицин.jpg",              "Глицин.jpg",               "Глицин.jpg"], # Дублируем для безопасности
     "Стоп-кодон":          ["Стоповой кодон.jpg"],
     "Изолейцин":           ["Изолейцин.jpg",           "Изолейцин2.jpg"],
     "Лейцин":              ["Лейцин.jpg",              "Лейцин2.jpg"],
@@ -142,15 +143,21 @@ RUNE_IMAGES = {
     "Тирозин":             ["Тирозин.jpg",             "Тирозин2.jpg"],
     "Треонин":             ["Треонин.jpg",             "Треонин2.jpg",             "Треонин3.jpg",  "Треонин4.jpg"],
     "Фенилаланин":         ["Фенилаланин.jpg",         "Фенилаланин 2.jpg"],
-    "Цистеин":             ["Цистеин.jpg",             None],
+    "Цистеин":             ["Цистеин.jpg",             "Цистеин.jpg"], # Дублируем для безопасности
     "Селеноцистеин":       ["Селеноцистеин.jpg"],
 }
 
 def find_rune_image(amino: str, index: int) -> str | None:
     files = RUNE_IMAGES.get(amino, [])
-    if index >= len(files) or files[index] is None:
+    if not files:
         return None
-    path = os.path.join("images", "runes", files[index])
+    # Если картинки для конкретной руны нет, бот умно берет первую (базовую)
+    if index >= len(files) or files[index] is None:
+        img_name = files[0]
+    else:
+        img_name = files[index]
+        
+    path = os.path.join("images", "runes", img_name)
     return path if os.path.exists(path) else None
 
 def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
@@ -341,7 +348,6 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
         await message.answer(promo_text, parse_mode="Markdown")
         return
         
-    # Очищаем данные от прошлых запусков! ВАЖНО: очищаем final_images
     await state.update_data(complex_num=1, final_runes=[], final_aminos=[], final_images=[])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
@@ -395,7 +401,6 @@ async def proc_red(callback: CallbackQuery, state: FSMContext):
         await bot.send_message(chat_id=callback.message.chat.id, text=f"Триплет {triplet} не найден.")
         return
 
-    # ПЕРЕДАЕМ ИНДЕКС 0 ДЛЯ АМИНОКИСЛОТ С ОДНОЙ РУНОЙ
     if len(runes) == 1:
         await save_rune_and_continue(callback.message, state, runes[0], amino, 0)
         return
@@ -452,14 +457,12 @@ async def proc_carousel(callback: CallbackQuery, state: FSMContext):
 async def proc_rune_carousel(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
-    # ПОЛУЧАЕМ ИНДЕКС ВЫБРАННОЙ КАРТИНКИ
     chosen_index = int(callback.data.split("_")[1])
     carousel_msg_id = data.get("carousel_msg_id")
     if carousel_msg_id:
         try: await bot.delete_message(chat_id=callback.message.chat.id, message_id=carousel_msg_id)
         except Exception: pass
     await state.update_data(carousel_msg_id=None, carousel_file_ids={})
-    # ПЕРЕДАЕМ ИНДЕКС
     await save_rune_and_continue(callback.message, state, data.get("current_runes", [])[chosen_index], data.get("current_amino", ""), chosen_index)
 
 @dp.callback_query(Ritual.waiting_for_rune_choice, F.data.startswith("rune_"))
@@ -467,29 +470,25 @@ async def proc_rune(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     data = await state.get_data()
     await callback.message.delete()
-    # ПОЛУЧАЕМ ИНДЕКС
     chosen_index = int(callback.data.split("_")[1])
     await save_rune_and_continue(callback.message, state, data['current_runes'][chosen_index], data['current_amino'], chosen_index)
 
-# --- ПРИНИМАЕМ ИНДЕКС И СОХРАНЯЕМ ТОЧНОЕ ИМЯ КАРТИНКИ ---
 async def save_rune_and_continue(message: Message, state: FSMContext, rune: str, amino: str, chosen_index: int = 0):
     data = await state.get_data()
     runes = data.get('final_runes', []) + [rune]
     aminos = data.get('final_aminos', []) + [amino]
     
-    # 🌟 ВОТ ОНО! Сохраняем имя конкретного файла, который был в карусели
     images_list = data.get('final_images', [])
     files = RUNE_IMAGES.get(amino, [])
     if chosen_index < len(files) and files[chosen_index] is not None:
         img_filename = files[chosen_index]
     else:
-        img_filename = f"{amino}.jpg" # Запасной вариант
+        img_filename = files[0] if files else f"{amino}.jpg"
     images_list.append(img_filename)
 
     complex_num = data.get('complex_num', 1)
     
     if complex_num < 3:
-        # Обновляем стейт с новыми картинками
         await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos, final_images=images_list)
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
         caption = f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** СИНЯЯ грань:"
@@ -505,7 +504,6 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         now = datetime.now()
         trial_end = datetime.fromisoformat(user_data.get("trial_end", now.isoformat()))
         
-        # 🌟 ПЕРЕДАЕМ ИМЕНА КАРТИНОК В ССЫЛКУ!
         aminos_encoded = urllib.parse.quote(",".join(aminos))
         images_encoded = urllib.parse.quote(",".join(images_list))
         web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&images={images_encoded}&v={int(now.timestamp())}"
@@ -538,7 +536,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             pay_text = (
                 "🎉 **ОБРЯД ЗАВЕРШЕН!**\n\n"
                 "⚠️ Ваш период бесплатного доступа закончился.\n\n"
-                "Для получения расшифровки, безлимитных обрядов и доступа в закры сообщество выберите подходящий тариф ниже:\n\n"
+                "Для получения расшифровки, безлимитных обрядов и доступа в закрытое сообщество выберите подходящий тариф ниже:\n\n"
                 "💡 **Нет возможности оплатить?**\n"
                 "Пригласите друга по ссылке ниже и получите `+3 дня` бесплатного доступа за каждого!\n"
                 f"🔗 Ваша ссылка: `{ref_link}`"
@@ -603,7 +601,6 @@ async def successful_payment(message: Message, state: FSMContext):
         aminos = data.get('final_aminos', [])
         images_list = data.get('final_images', [])
         
-        # Передаем обновленные данные в URL
         aminos_encoded = urllib.parse.quote(",".join(aminos))
         images_encoded = urllib.parse.quote(",".join(images_list))
         web_app_url = f"https://Bochok100.github.io/rune/result.html?aminos={aminos_encoded}&images={images_encoded}&v={int(now.timestamp())}"
