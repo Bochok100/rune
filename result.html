@@ -17,14 +17,13 @@
         
         h1 { text-align: center; font-size: 22px; margin-bottom: 20px; font-weight: 700; }
         
-        /* --- СТИЛИ ДЛЯ РАСКРЫВАЮЩЕЙСЯ КАРТОЧКИ --- */
         .card { 
             background-color: var(--tg-theme-secondary-bg-color, #242424); 
             border-radius: 16px; 
             margin-bottom: 16px; 
             box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
             border: 1px solid rgba(255,255,255,0.03); 
-            cursor: pointer; /* Показываем, что на карточку можно нажать */
+            cursor: pointer; 
             transition: background-color 0.2s;
         }
         .card:active { background-color: rgba(255, 255, 255, 0.05); }
@@ -48,7 +47,6 @@
         }
         .card.active .arrow { transform: rotate(180deg); }
 
-        /* Внутренний контент карточки (картинка + текст) */
         .accordion-content {
             max-height: 0; 
             overflow: hidden; 
@@ -57,20 +55,18 @@
             padding: 0 16px;
         }
         .card.active .accordion-content {
-            max-height: 3000px; /* Большой запас для длинного текста */
+            max-height: 3000px; 
             opacity: 1;
             padding: 0 16px 16px 16px;
         }
 
-        /* Стили для картинки и текста внутри */
         .amino-block { display: flex; gap: 16px; align-items: flex-start; }
         .amino-img { width: 80px; height: 80px; border-radius: 12px; object-fit: cover; border: 2px solid var(--tg-theme-button-color, #5288c1); box-shadow: 0 4px 8px rgba(0,0,0,0.2); flex-shrink: 0; }
         .amino-text { flex-grow: 1; margin: 0; font-size: 14px; opacity: 0.9; }
 
-        /* Стили для инструкций снизу */
         .instruction { margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px; }
         .instruction h2 { color: #e0a96d; font-size: 18px; margin: 0 0 10px 0;}
-        .instruction .card { cursor: default; padding: 16px; } /* Нижние карточки не кликабельные */
+        .instruction .card { cursor: default; padding: 16px; }
         ul { padding-left: 20px; margin-top: 5px; }
         li { margin-bottom: 5px; font-size: 14px; opacity: 0.9; }
         p { margin: 0 0 10px 0; font-size: 14px; opacity: 0.9; }
@@ -110,7 +106,6 @@
         try {
             window.Telegram.WebApp.expand();
 
-            // ТВОЙ ПОЛНЫЙ СЛОВАРЬ (Я бережно перенес все твои тексты!)
             const descriptions = {
                 "Аланин": "Аланин — важный источник энергии для мышечных тканей, головного мозга и центральной нервной системы. Укрепляет иммунную систему путем участия в обмене сахаров и органических кислот, а также помогает организму преобразовывать глюкозу в энергию.",
                 "Аргинин": "Аргинин — условно-незаменимая аминокислота. Играет важную роль в делении клеток, восстановлении после травм, выведении шлаков и поддержании иммунной функции. Улучшает кровообращение.",
@@ -139,16 +134,23 @@
 
             const params = new URLSearchParams(window.location.search);
             const aminosParam = params.get('aminos');
+            const imagesParam = params.get('images'); 
+            
             let html = "";
 
             if (aminosParam) {
                 const aminos = aminosParam.split(',');
+                const imagesList = imagesParam ? imagesParam.split(',') : [];
+                // ВЗЛОМЩИК КЭША (чтобы всегда грузило свежие картинки)
+                const cacheBuster = new Date().getTime(); 
                 
                 aminos.forEach((amino, index) => {
                     let desc = descriptions[amino] || "Описание параметров аминокислоты находится в разработке.";
-                    let imgSrc = `images/amino/${amino}.jpg`;
+                    let imgFile = imagesList[index] ? imagesList[index] : `${amino}.jpg`;
                     
-                    // Твоя верстка карточки, но теперь с функцией onclick для раскрытия!
+                    // ДОБАВЛЕН ?v=${cacheBuster} к ссылке на картинку!
+                    let imgSrc = `images/runes/${imgFile}?v=${cacheBuster}`;
+                    
                     html += `
                         <div class="card" onclick="this.classList.toggle('active')">
                             <div class="accordion-header">
