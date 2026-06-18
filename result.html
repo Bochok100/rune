@@ -3,122 +3,162 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Расшифровка Обряда</title>
+    <title>Результаты обряда</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 16px; background-color: var(--tg-theme-bg-color, #1a1a1a); color: var(--tg-theme-text-color, #ffffff); line-height: 1.5; }
-        .card { background-color: var(--tg-theme-secondary-bg-color, #242424); padding: 16px; border-radius: 16px; margin-bottom: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: flex; flex-direction: column; gap: 12px; border: 1px solid rgba(255,255,255,0.03); }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--tg-theme-bg-color, #1a1a1a);
+            color: var(--tg-theme-text-color, #ffffff);
+            padding: 20px;
+            margin: 0;
+        }
+        h1 {
+            text-align: center;
+            color: var(--tg-theme-button-color, #5288c1);
+            font-size: 22px;
+            margin-bottom: 20px;
+        }
         
-        /* Стили для адаптивного блока аминокислоты (картинка + текст) */
-        .amino-block { display: flex; gap: 16px; align-items: flex-start; }
-        .amino-img { width: 80px; height: 80px; border-radius: 12px; object-fit: cover; border: 2px solid var(--tg-theme-button-color, #5288c1); box-shadow: 0 4px 8px rgba(0,0,0,0.2); flex-shrink: 0; }
-        .amino-text { flex-grow: 1; margin: 0; }
+        /* КРАСИВЫЙ ДИЗАЙН ГАРМОШКИ */
+        .accordion-item {
+            background-color: var(--tg-theme-secondary-bg-color, #242424);
+            border-radius: 12px;
+            margin-bottom: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .accordion-header {
+            padding: 16px;
+            font-weight: bold;
+            font-size: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            color: var(--tg-theme-button-color, #5288c1);
+            transition: background-color 0.2s;
+        }
+        .accordion-header:active {
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+        /* Стрелочка */
+        .arrow {
+            transition: transform 0.3s ease;
+            font-size: 12px;
+        }
+        .accordion-item.active .arrow {
+            transform: rotate(180deg);
+        }
         
-        h2 { color: var(--tg-theme-button-color, #5288c1); font-size: 18px; margin: 0; font-weight: 700; }
-        h1 { text-align: center; font-size: 22px; margin-bottom: 20px; font-weight: 700; }
-        .instruction h2 { color: #e0a96d; }
-        ul { padding-left: 20px; margin-top: 5px; }
-        li { margin-bottom: 5px; font-size: 14px; opacity: 0.9; }
-        p { margin: 0; font-size: 14px; opacity: 0.9; }
+        /* ПЛАВНОЕ РАСКРЫТИЕ */
+        .accordion-content {
+            max-height: 0;
+            padding: 0 16px;
+            opacity: 0;
+            transition: all 0.4s ease-in-out;
+            font-size: 15px;
+            line-height: 1.5;
+            color: var(--tg-theme-text-color, #e0e0e0);
+        }
+        .accordion-item.active .accordion-content {
+            max-height: 2000px; /* С запасом для очень длинного текста */
+            padding: 0 16px 16px 16px;
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
-    <h1>🔮 Ваша расшифровка</h1>
-    <div id="content">Обработка данных...</div>
 
-    <div class="instruction" style="margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px;">
-        <h1 style="text-align:center;">Проведение ритуала</h1>
-        
-        <div class="card">
-            <h2>✍️ Перенос рун</h2>
-            <p>Вы получили три руны. Перепишите их на подготовленную полоску бумаги, соблюдая порядок и образец написания.</p>
-            <p><b>Важно:</b></p>
-            <ul>
-                <li>руны записываются строго справа налево;</li>
-                <li>каждая линия должна точно соответствовать образцу;</li>
-                <li>нельзя изменять направление или количество линий.</li>
-            </ul>
-        </div>
-
-        <div class="card">
-            <h2>🕯 Работа с огнем</h2>
-            <p>Возьмите полоску бумаги левой рукой за чистый левый край, на котором нет рун. Зажгите свечу.</p>
-            <p>Начиная с первой руны, расположенной с правого края полоски, последовательно сожгите все три руны.</p>
-            <p><i>Достаточно, чтобы сгорели сами рунические знаки.</i></p>
-            <p>После этого положите бумагу на заранее подготовленную негорючую поверхность и дайте ей погаснуть.</p>
-        </div>
-
-        <div class="card">
-            <h2>🌬 Завершение</h2>
-            <p>Оставшуюся часть бумаги можно выбросить, а образовавшуюся сажу можно смыть водой в раковину или развеять по ветру через окно.</p>
-        </div>
-
-        <div class="card" style="background: rgba(77, 171, 247, 0.05); border: 1px dashed #4dabf7;">
-            <h2>🌌 Традиционное значение</h2>
-            <p>Практика основана на традиционных представлениях народа саха о трёх составляющих человека — три Кут. Данный метод направлен на работу с <b>Салгын Кут</b> (воздушной составляющей).</p>
-            <p style="font-size: 11px; color: var(--tg-theme-hint-color, #888); margin-top: 10px;">Данная практика относится к духовным традициям и не заменяет медицинские рекомендации специалистов.</p>
-        </div>
-    </div>
+    <h1>🔮 Твоя Триада Аминокислот</h1>
+    
+    <div id="results-container"></div>
 
     <script>
-        try {
-            window.Telegram.WebApp.ready();
-            window.Telegram.WebApp.expand();
+        // Инициализация Telegram WebApp (чтобы открывалось на весь экран)
+        const tg = window.Telegram.WebApp;
+        tg.expand();
 
-            const descriptions = {
-                "Аланин": "Аланин — важный источник энергии для мышечных тканей, головного мозга и центральной нервной системы...",
-                "Аргинин": "Аргинин — играет важную роль в делении клеток, восстановлении после травм и поддержании иммунной функции...",
-                "Аспарагин": "Аспарагин — необходим для поддержания баланса в процессах, происходящих в центральной нервной системе...",
-                "Стоп-кодон": "Стоп-кодон — это сигнал остановки и фиксации. Означает завершение определенного этапа или необходимую паузу...",
-                "Аспарагиновая к-та": "Аспарагиновая кислота — повышает сопротивляемость усталости, стимулирует иммунитет, балансирует ЦНС...",
-                "Валин": "Валин — незаменимая аминокислота, необходима для метаболизма в мышцах и восстановления поврежденных тканей...",
-                "Глютамин": "Глютамин — поддерживает работу головного мозга, азотный обмен, удаляет избыток аммиака из тканей...",
-                "Глютаминовая к-та": "Глютаминовая кислота — нейромедиатор, передающий импульсы в ЦНС, используется мозгом как источник энергии...",
-                "Гистидин": "Гистидин — способствует росту и восстановлению тканей, защищает организм от радиации и тяжелых металлов...",
-                "Глицин": "Глицин — замедляет дегенерацию мышечной ткани, необходим для нормального функционирования ЦНС...",
-                "Изолейцин": "Изолейцин — необходим для синтеза гемоглобина, стабилизирует и регулирует уровень сахара в крови...",
-                "Лейцин": "Лейцин — защищает мышечные ткани, способствует восстановлению костей, кожи и мышц...",
-                "Лизин": "Лизин — необходим для формирования костей, участвует в синтезе антител и оказывает противовирусное действие...",
-                "Пирролизин": "Пирролизин — 22-я аминокислота, закодированная генетически кодоном UAG в открытой рамке считывания...",
-                "Метионин": "Метионин — помогает переработке жиров, предотвращая их отложение в печени, антиоксидант...",
-                "Пролин": "Пролин — улучшает состояние кожи за счет продукции коллагена, укрепляет связки и суставы...",
-                "Серин": "Серин — необходим для обмена жиров, роста мышечной ткани и поддержания иммунной системы...",
-                "Триптофан": "Триптофан — используется для синтеза серотонина, применяется при бессоннице, депрессии и для настроения...",
-                "Тирозин": "Тирозин — предшественник норэпинефрина и дофамина. Участвует в регуляции настроения...",
-                "Цистеин": "Цистеин — играет важную роль в формировании тканей кожи, имеет значение для дезинтоксикации...",
-                "Селеноцистеин": "Селеноцистеин — 21-я аминокислота, отличается наличием селена. Важен для антиоксидантной защиты печени...",
-                "Треонин": "Треонин — способствует поддержанию белкового обмена, важен для синтеза коллагена и эластина...",
-                "Фенилаланин": "Фенилаланин — служит предшественником для выработки норадреналина, влияет на уровень эндорфинов."
-            };
+        // 📝 ВПИШИ СЮДА СВОИ ТЕКСТЫ!
+        // Просто заменяй текст внутри кавычек для каждой аминокислоты. Можно использовать HTML теги, например <br> для переноса строки или <b>жирный</b>.
+        const aminoDescriptions = {
+            "Треонин": "Треонин — способствует поддержанию белкового обмена, важен для синтеза коллагена и эластина.<br><br>Здесь можно писать длинный текст, давать рекомендации и инсайты. Текст плавно выедет вниз.",
+            "Аланин": "Аланин — важный источник энергии для мышц и нервной системы. Помогает регулировать уровень сахара в крови.",
+            "Аргинин": "Текст про Аргинин...",
+            "Аспарагин": "Текст про Аспарагин...",
+            "Аспарагиновая к-та": "Текст про Аспарагиновую кислоту...",
+            "Валин": "Текст про Валин...",
+            "Глютамин": "Текст про Глютамин...",
+            "Глютаминовая к-та": "Текст про Глютаминовую кислоту...",
+            "Гистидин": "Текст про Гистидин...",
+            "Глицин": "Текст про Глицин...",
+            "Стоп-кодон": "Текст про Стоп-кодон...",
+            "Изолейцин": "Текст про Изолейцин...",
+            "Лейцин": "Текст про Лейцин...",
+            "Лизин": "Текст про Лизин...",
+            "Пирролизин": "Текст про Пирролизин...",
+            "Метионин": "Текст про Метионин...",
+            "Пролин": "Текст про Пролин...",
+            "Серин": "Текст про Серин...",
+            "Триптофан": "Текст про Триптофан...",
+            "Тирозин": "Текст про Тирозин...",
+            "Фенилаланин": "Текст про Фенилаланин...",
+            "Цистеин": "Текст про Цистеин...",
+            "Селеноцистеин": "Текст про Селеноцистеин..."
+        };
 
-            const params = new URLSearchParams(window.location.search);
-            const aminosParam = params.get('aminos');
-            
-            let html = '';
-            if (aminosParam) {
-                const aminos = aminosParam.split(',');
-                aminos.forEach((amino, index) => {
-                    let desc = descriptions[amino] || "Описание параметров аминокислоты находится в разработке.";
-                    // Путь к уменьшенной картинке аминокислоты на сервере
-                    let imgSrc = `images/amino/${amino}.jpg`;
-                    
-                    html += `
-                        <div class="card">
-                            <h2>${index + 1}. ${amino}</h2>
-                            <div class="amino-block">
-                                <img src="${imgSrc}" class="amino-img" onerror="this.style.display='none';">
-                                <p class="amino-text">${desc}</p>
-                            </div>
-                        </div>`;
-                });
-            } else {
-                html = "<p>Данные для расшифровки не найдены.</p>";
+        // Логика: Бот передает в ссылке ?aminos=Треонин,Аланин,Глицин
+        function buildResults() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const aminosParam = urlParams.get('aminos');
+            const container = document.getElementById('results-container');
+
+            if (!aminosParam) {
+                container.innerHTML = "<p style='text-align:center;'>Ошибка: Аминокислоты не найдены.</p>";
+                return;
             }
-            
-            document.getElementById('content').innerHTML = html;
-        } catch (err) {
-            document.getElementById('content').innerHTML = "<p style='color:red;'>Ошибка загрузки данных: " + err.message + "</p>";
+
+            const aminosList = aminosParam.split(',');
+
+            // Для каждой аминокислоты, которую выдал бот, создаем карточку
+            aminosList.forEach((amino, index) => {
+                const desc = aminoDescriptions[amino] || "Описание скоро появится. Мы работаем над этим.";
+
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'accordion-item';
+
+                itemDiv.innerHTML = `
+                    <div class="accordion-header" onclick="toggleAccordion(this)">
+                        <span>${index + 1}. ${amino}</span>
+                        <span class="arrow">▼</span>
+                    </div>
+                    <div class="accordion-content">
+                        <p>${desc}</p>
+                    </div>
+                `;
+                
+                container.appendChild(itemDiv);
+            });
         }
+
+        // Функция плавной анимации гармошки
+        function toggleAccordion(header) {
+            const currentItem = header.parentElement;
+            
+            // Если нужно, чтобы при открытии одной закрывались остальные — раскомментируй код ниже:
+            /*
+            const allItems = document.querySelectorAll('.accordion-item');
+            allItems.forEach(item => {
+                if(item !== currentItem) item.classList.remove('active');
+            });
+            */
+            
+            currentItem.classList.toggle('active');
+        }
+
+        // Запускаем сборку страницы при открытии
+        buildResults();
     </script>
 </body>
 </html>
