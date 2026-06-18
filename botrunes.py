@@ -52,7 +52,7 @@ AMINO_ACIDS = {
     "Глютамин": {"codons": ["ЦАА", "ЦАГ"], "runes": ["Λ", "П"]},
     "Глютаминовая к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
     "Гистидин": {"codons": ["ЦАУ", "ЦАЦ"], "runes": ["𐰓"]},
-    "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺", "D", "❂"]},
+    "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺"]}, # ОСТАВИЛИ ТОЛЬКО ОДНУ РУНУ!
     "Стоп-кодон": {"codons": ["УАА"], "runes": ["33"]},
     "Изолейцин": {"codons": ["АУУ", "АУЦ", "АУА"], "runes": ["I|", "Є"]},
     "Лейцин": {"codons": ["УУА", "УУГ", "ЦУУ", "ЦУЦ", "ЦУА", "ЦУГ"], "runes": ["Y", "J"]},
@@ -120,7 +120,6 @@ def get_greeting_text(user_data, now):
         greeting += "⚠️ **Ваша подписка неактивна.**\nПройдите обряд, чтобы выбрать тариф и получить доступ к результатам.\n\n"
     return greeting
 
-# --- ИДЕАЛЬНЫЙ СЛОВАРЬ (Защищен от ошибок None) ---
 RUNE_IMAGES = {
     "Аргинин":             ["Аргинин.jpg",             "Аргинин2.jpg"],
     "Аланин":              ["Аланин.jpg",              "Аланин2.jpg",              "Аланин3.jpg",   "Аланин4.jpg"],
@@ -130,7 +129,7 @@ RUNE_IMAGES = {
     "Глютамин":            ["Глютамин.jpg",            "Глютамин2.jpg"],
     "Глютаминовая к-та":   ["Глютаминовая к-та.jpg"],
     "Гистидин":            ["Гистидин.jpg"],
-    "Глицин":              ["Глицин.jpg",              "Глицин.jpg",               "Глицин.jpg"], # Дублируем для безопасности
+    "Глицин":              ["Глицин.jpg"], # Изображение только для одной руны
     "Стоп-кодон":          ["Стоповой кодон.jpg"],
     "Изолейцин":           ["Изолейцин.jpg",           "Изолейцин2.jpg"],
     "Лейцин":              ["Лейцин.jpg",              "Лейцин2.jpg"],
@@ -143,7 +142,7 @@ RUNE_IMAGES = {
     "Тирозин":             ["Тирозин.jpg",             "Тирозин2.jpg"],
     "Треонин":             ["Треонин.jpg",             "Треонин2.jpg",             "Треонин3.jpg",  "Треонин4.jpg"],
     "Фенилаланин":         ["Фенилаланин.jpg",         "Фенилаланин 2.jpg"],
-    "Цистеин":             ["Цистеин.jpg",             "Цистеин.jpg"], # Дублируем для безопасности
+    "Цистеин":             ["Цистеин.jpg",             "Цистеин.jpg"], 
     "Селеноцистеин":       ["Селеноцистеин.jpg"],
 }
 
@@ -151,7 +150,6 @@ def find_rune_image(amino: str, index: int) -> str | None:
     files = RUNE_IMAGES.get(amino, [])
     if not files:
         return None
-    # Если картинки для конкретной руны нет, бот умно берет первую (базовую)
     if index >= len(files) or files[index] is None:
         img_name = files[0]
     else:
@@ -176,6 +174,59 @@ def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
     ] if nav_row else [
         [InlineKeyboardButton(text=f"✅ Выбрать эту руну", callback_data=f"rune_{current}")]
     ])
+
+# =========================================================
+# === НОВЫЙ БЛОК: СЕКРЕТНЫЕ КОМАНДЫ ДЛЯ ПРОВЕРКИ КАРТИНОК ===
+# =========================================================
+
+@dp.message(Command("check_images"))
+async def cmd_check_images(message: Message):
+    if message.from_user.id != MY_ID: return
+    
+    report = "📊 **Отчет по картинкам рун:**\n\n"
+    missing = []
+    found = 0
+    
+    for amino, files in RUNE_IMAGES.items():
+        for img in files:
+            path = os.path.join("images", "runes", img)
+            if not os.path.exists(path):
+                if img not in missing: missing.append(img)
+            else:
+                found += 1
+                
+    report += f"✅ Найдено файлов: {found}\n"
+    report += f"❌ Отсутствует: {len(missing)}\n\n"
+    if missing:
+        report += "⚠️ **Не найдены файлы:**\n" + "\n".join(missing)
+    else:
+        report += "🎉 **Все картинки на месте!**"
+        
+    await message.answer(report, parse_mode="Markdown")
+
+@dp.message(Command("show_images"))
+async def cmd_show_images(message: Message):
+    if message.from_user.id != MY_ID: return
+    
+    await message.answer("🔍 Начинаю выгрузку всех картинок...\nСравни символ на фото с символом в тексте!")
+    
+    for amino, files in RUNE_IMAGES.items():
+        for i, img in enumerate(files):
+            path = os.path.join("images", "runes", img)
+            runes_list = AMINO_ACIDS[amino]["runes"]
+            rune_symbol = runes_list[i] if i < len(runes_list) else "?"
+            
+            if os.path.exists(path):
+                caption = f"🧪 Аминокислота: **{amino}**\n📁 Файл: `{img}`\n🔮 На фото должна быть руна: **{rune_symbol}**"
+                try:
+                    await bot.send_photo(chat_id=message.chat.id, photo=FSInputFile(path), caption=caption, parse_mode="Markdown")
+                    await asyncio.sleep(0.5) # Пауза, чтобы телеграм не заблокировал за спам
+                except Exception as e:
+                    pass
+    await message.answer("✅ Выгрузка завершена!")
+
+# =========================================================
+
 
 async def daily_notifier():
     while True:
