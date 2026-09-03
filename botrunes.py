@@ -24,20 +24,26 @@ from aiogram.fsm.storage.redis import RedisStorage
 from redis.asyncio import Redis
 
 # --- УМНАЯ ЗАГРУЗКА ТОКЕНОВ ИЗ СЕЙФА ---
+# Новые переменные: добавьте их в файл .env рядом с botrunes.py, затем прочитайте через env().
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-raw_token = os.getenv("BOT_TOKEN")
+def env(name: str, default: str = "") -> str:
+    value = os.getenv(name, default)
+    return value.strip().replace('"', "").replace("'", "") if value else default
+
+raw_token = env("BOT_TOKEN")
 if not raw_token:
     raise ValueError("❌ КРИТИЧЕСКАЯ ОШИБКА: Бот не видит токен! Проверьте файл .env")
-BOT_TOKEN = raw_token.strip().replace('"', '').replace("'", "")
+BOT_TOKEN = raw_token
 
-raw_payment = os.getenv("PAYMENT_TOKEN")
-PAYMENT_TOKEN = raw_payment.strip().replace('"', '').replace("'", "") if raw_payment else ""
+PAYMENT_TOKEN = env("PAYMENT_TOKEN")
+REDIS_HOST = env("REDIS_HOST", "localhost")
+REDIS_PORT = int(env("REDIS_PORT", "6379") or "6379")
 
 DB_FILE = "users_db.json"
-MY_ID = 297967650
+MY_ID = int(env("ADMIN_ID", "297967650") or "297967650")
 
-redis = Redis(host='localhost')
+redis = Redis(host=REDIS_HOST, port=REDIS_PORT)
 storage = RedisStorage(redis=redis)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
