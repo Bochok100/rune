@@ -6,7 +6,6 @@ After=network.target redis-server.service redis.service
 Type=simple
 WorkingDirectory=/opt/rune
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=-/opt/rune/.env
 ExecStart=/opt/rune/venv/bin/python /opt/rune/botrunes.py
 Restart=always
 RestartSec=5
