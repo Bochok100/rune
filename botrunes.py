@@ -21,6 +21,7 @@ from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.exceptions import TelegramConflictError, TelegramUnauthorizedError
 from redis.asyncio import Redis
 
 # --- УМНАЯ ЗАГРУЗКА ТОКЕНОВ ИЗ СЕЙФА ---
@@ -903,11 +904,36 @@ async def successful_payment(message: Message, state: FSMContext):
         await state.update_data(pending_order=None)
 
 async def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
     os.makedirs("images/amino", exist_ok=True)
     os.makedirs("images/runes", exist_ok=True)
+
+    try:
+        await redis.ping()
+    except Exception as e:
+        logging.error("Redis недоступен (%s:%s): %s", REDIS_HOST, REDIS_PORT, e)
+        raise
+
+    try:
+        me = await bot.get_me()
+    except TelegramUnauthorizedError:
+        logging.error("Неверный BOT_TOKEN в файле .env — проверьте токен у @BotFather")
+        raise
+
+    logging.info("Бот онлайн: @%s id=%s", me.username, me.id)
     await bot.delete_webhook(drop_pending_updates=True)
     asyncio.create_task(daily_notifier())
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    except TelegramConflictError:
+        logging.error(
+            "Этот токен уже опрашивает другой процесс. "
+            "Остановите старый бот (другой сервер или Docker) или смените токен."
+        )
+        raise
 
 if __name__ == "__main__":
     asyncio.run(main())

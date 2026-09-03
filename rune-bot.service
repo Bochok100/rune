@@ -1,0 +1,17 @@
+[Unit]
+Description=Rune Telegram bot
+After=network.target redis-server.service redis.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/rune
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/rune/.env
+ExecStart=/opt/rune/venv/bin/python /opt/rune/botrunes.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
