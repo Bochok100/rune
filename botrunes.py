@@ -21,27 +21,44 @@ from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.exceptions import TelegramConflictError, TelegramUnauthorizedError
 from redis.asyncio import Redis
 
 # --- УМНАЯ ЗАГРУЗКА ТОКЕНОВ ИЗ СЕЙФА ---
 # Новые переменные: добавьте их в файл .env рядом с botrunes.py, затем прочитайте через env().
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 def env(name: str, default: str = "") -> str:
     value = os.getenv(name, default)
     return value.strip().replace('"', "").replace("'", "") if value else default
 
+def env_int(name: str, default: int) -> int:
+    raw = env(name, str(default))
+    if raw.isdigit():
+        return int(raw)
+    return default
+
 raw_token = env("BOT_TOKEN")
-if not raw_token:
-    raise ValueError("❌ КРИТИЧЕСКАЯ ОШИБКА: Бот не видит токен! Проверьте файл .env")
+if not raw_token or "замените" in raw_token:
+    raise ValueError("❌ КРИТИЧЕСКАЯ ОШИБКА: Бот не видит токен! Проверьте BOT_TOKEN в файле .env")
 BOT_TOKEN = raw_token
 
 PAYMENT_TOKEN = env("PAYMENT_TOKEN")
-REDIS_HOST = env("REDIS_HOST", "localhost")
-REDIS_PORT = int(env("REDIS_PORT", "6379") or "6379")
+admin_raw = env("ADMIN_ID")
+if admin_raw.startswith(("live_", "test_")):
+    if not PAYMENT_TOKEN or "замените" in PAYMENT_TOKEN:
+        PAYMENT_TOKEN = admin_raw
+    admin_raw = ""
+if PAYMENT_TOKEN.startswith("замените"):
+    PAYMENT_TOKEN = ""
+
+REDIS_HOST = env("REDIS_HOST", "localhost") or "localhost"
+REDIS_PORT = env_int("REDIS_PORT", 6379)
 
 DB_FILE = "users_db.json"
-MY_ID = int(env("ADMIN_ID", "297967650") or "297967650")
+MY_ID = env_int("ADMIN_ID", 297967650)
+if admin_raw.isdigit():
+    MY_ID = int(admin_raw)
 
 redis = Redis(host=REDIS_HOST, port=REDIS_PORT)
 storage = RedisStorage(redis=redis)
@@ -903,11 +920,36 @@ async def successful_payment(message: Message, state: FSMContext):
         await state.update_data(pending_order=None)
 
 async def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
     os.makedirs("images/amino", exist_ok=True)
     os.makedirs("images/runes", exist_ok=True)
+
+    try:
+        await redis.ping()
+    except Exception as e:
+        logging.error("Redis недоступен (%s:%s): %s", REDIS_HOST, REDIS_PORT, e)
+        raise
+
+    try:
+        me = await bot.get_me()
+    except TelegramUnauthorizedError:
+        logging.error("Неверный BOT_TOKEN в файле .env — проверьте токен у @BotFather")
+        raise
+
+    logging.info("Бот онлайн: @%s id=%s", me.username, me.id)
     await bot.delete_webhook(drop_pending_updates=True)
     asyncio.create_task(daily_notifier())
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    except TelegramConflictError:
+        logging.error(
+            "Этот токен уже опрашивает другой процесс. "
+            "Остановите старый бот (другой сервер или Docker) или смените токен."
+        )
+        raise
 
 if __name__ == "__main__":
     asyncio.run(main())
