@@ -85,6 +85,62 @@ def load_db():
 def save_db(data):
     with open(DB_FILE, "w") as f: json.dump(data, f)
 
+def empty_user_record(now: datetime) -> dict:
+    return {
+        "trial_end": now.isoformat(),
+        "next_ritual_time": now.isoformat(),
+        "notified": 0,
+        "paid": False,
+        "referrer": None,
+        "referrals_count": 0,
+        "ritual_step": 0,
+        "last_active": now.isoformat(),
+        "notified_incomplete": False,
+        "notified_12h": False,
+        "notified_inactive": False,
+        "special_day_notified": ""
+    }
+
+def ensure_user_record(db: dict, user_id: str, now: datetime | None = None) -> dict:
+    now = now or datetime.now()
+    data = db.get(user_id)
+    if not isinstance(data, dict):
+        data = empty_user_record(now)
+        db[user_id] = data
+    return data
+
+def days_left_from(trial_end: datetime, now: datetime) -> int:
+    time_left = trial_end - now
+    if time_left.total_seconds() <= 0:
+        return 0
+    return int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0)
+
+def restore_user_access(db: dict, user_id: str, days: int, now: datetime | None = None) -> dict:
+    now = now or datetime.now()
+    data = ensure_user_record(db, user_id, now)
+    current_end = datetime.fromisoformat(data.get("trial_end", now.isoformat()))
+    start_date = current_end if current_end > now else now
+    data["trial_end"] = (start_date + timedelta(days=days)).isoformat()
+    data["notified"] = 0
+    data["paid"] = True
+    return data
+
+def format_access_status(user_id: str, data: dict, now: datetime | None = None) -> str:
+    now = now or datetime.now()
+    trial_end = datetime.fromisoformat(data.get("trial_end", now.isoformat()))
+    next_ritual = datetime.fromisoformat(data.get("next_ritual_time", now.isoformat()))
+    left = days_left_from(trial_end, now)
+    active = now < trial_end
+    ritual_ready = now >= next_ritual
+    return (
+        f"👤 ID: `{user_id}`\n"
+        f"{'✅ Доступ активен' if active else '🔒 Доступ неактивен'}\n"
+        f"📅 До: `{trial_end.strftime('%Y-%m-%d %H:%M')}`\n"
+        f"⏳ Осталось дней: **{left}**\n"
+        f"🔮 Обряд: {'можно провести' if ritual_ready else 'ожидание таймера'}\n"
+        f"💳 paid: `{data.get('paid', False)}`"
+    )
+
 def get_main_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📖 Об авторе", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/author.html"))],
@@ -174,6 +230,88 @@ def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
     ] if nav_row else [
         [InlineKeyboardButton(text=f"✅ Выбрать эту руну", callback_data=f"rune_{current}")]
     ])
+
+@dp.message(Command("myid"))
+async def cmd_myid(message: Message):
+    await message.answer(f"Ваш Telegram ID: `{message.from_user.id}`", parse_mode="Markdown")
+
+@dp.message(Command("whois"))
+async def cmd_whois(message: Message, command: CommandObject):
+    if message.from_user.id != MY_ID:
+        return
+    args = (command.args or "").split()
+    target_id = args[0] if args else str(message.from_user.id)
+    if not target_id.isdigit():
+        await message.answer("Использование: `/whois <telegram_id>`", parse_mode="Markdown")
+        return
+    db = load_db()
+    data = db.get(target_id)
+    if not isinstance(data, dict):
+        await message.answer(f"Пользователь `{target_id}` не найден в базе.", parse_mode="Markdown")
+        return
+    await message.answer(format_access_status(target_id, data), parse_mode="Markdown")
+
+@dp.message(Command("grant"))
+async def cmd_grant(message: Message, command: CommandObject):
+    if message.from_user.id != MY_ID:
+        return
+    args = (command.args or "").split()
+    if len(args) == 1:
+        target_id, days_raw = str(message.from_user.id), args[0]
+    elif len(args) == 2:
+        target_id, days_raw = args[0], args[1]
+    else:
+        await message.answer(
+            "Восстановление доступа:\n"
+            "`/grant <telegram_id> <дни>`\n"
+            "`/grant <дни>` — продлить себе\n\n"
+            "Примеры:\n`/grant 123456789 30`\n`/grant 7`",
+            parse_mode="Markdown"
+        )
+        return
+    if not target_id.isdigit() or not days_raw.lstrip("-").isdigit():
+        await message.answer("ID и количество дней должны быть числами.")
+        return
+    days = int(days_raw)
+    if days < 1 or days > 3650:
+        await message.answer("Количество дней должно быть от 1 до 3650.")
+        return
+
+    db = load_db()
+    data = restore_user_access(db, target_id, days)
+    save_db(db)
+    status = format_access_status(target_id, data)
+    await message.answer(f"🔓 **Доступ восстановлен на {days} дн.**\n\n{status}", parse_mode="Markdown")
+
+    if int(target_id) != message.from_user.id:
+        try:
+            left = days_left_from(datetime.fromisoformat(data["trial_end"]), datetime.now())
+            await bot.send_message(
+                chat_id=int(target_id),
+                text=f"🔓 **Ваш доступ восстановлен.**\n\nАктивен ещё **{left}** дн. Напишите /start, чтобы продолжить.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            await message.answer("⚠️ Пользователю не удалось отправить уведомление (возможно, он не запускал бота).")
+
+@dp.message(Command("allow_ritual"))
+async def cmd_allow_ritual(message: Message, command: CommandObject):
+    if message.from_user.id != MY_ID:
+        return
+    args = (command.args or "").split()
+    target_id = args[0] if args else str(message.from_user.id)
+    if not target_id.isdigit():
+        await message.answer("Использование: `/allow_ritual <telegram_id>`", parse_mode="Markdown")
+        return
+    db = load_db()
+    now = datetime.now()
+    data = ensure_user_record(db, target_id, now)
+    data["next_ritual_time"] = now.isoformat()
+    data["ritual_step"] = 0
+    data["notified_12h"] = False
+    data["notified_incomplete"] = False
+    save_db(db)
+    await message.answer(f"🔮 Таймер обряда сброшен для `{target_id}`.", parse_mode="Markdown")
 
 @dp.message(Command("check_images"))
 async def cmd_check_images(message: Message):
