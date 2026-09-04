@@ -1,6 +1,8 @@
 .env
 venv/
 file_ids.json
+max_fsm.json
+max_marker.txt
 __pycache__/
 *.pyc
 users_db.json

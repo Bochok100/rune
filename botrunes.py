@@ -57,7 +57,6 @@ if PAYMENT_TOKEN.startswith("замените"):
 REDIS_HOST = env("REDIS_HOST", "localhost") or "localhost"
 REDIS_PORT = env_int("REDIS_PORT", 6379)
 
-DB_FILE = "users_db.json"
 MY_ID = env_int("ADMIN_ID", 297967650)
 if admin_raw.isdigit():
     MY_ID = int(admin_raw)
@@ -66,6 +65,20 @@ redis = Redis(host=REDIS_HOST, port=REDIS_PORT)
 storage = RedisStorage(redis=redis)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
+
+from ritual_data import (
+    AMINO_ACIDS,
+    BASE_MAP,
+    RUNE_IMAGES,
+    days_left_from,
+    ensure_user_record,
+    find_rune_image,
+    format_access_status,
+    get_greeting_text,
+    load_db,
+    restore_user_access,
+    save_db,
+)
 
 FILE_IDS_PATH = "file_ids.json"
 _file_ids_cache = None
@@ -141,33 +154,6 @@ async def send_cached_photo(chat_id: int, path: str, **kwargs):
         remember_file_id(path, msg.photo[-1].file_id)
     return msg
 
-BASE_MAP = {"1": "А", "2": "Ц", "3": "У", "4": "Г"}
-AMINO_ACIDS = {
-    "Аргинин": {"codons": ["ЦГЦ", "ЦГУ", "ЦГА", "ЦГГ", "АГА", "АГГ"], "runes": ["Ч", "Y"]},
-    "Аланин": {"codons": ["ГЦУ", "ГЦГ", "ГЦЦ", "ГЦА"], "runes": [")", "¥", "𐰉", "𐰈"]},
-    "Аспарагин": {"codons": ["ААУ", "ААЦ"], "runes": ["ʎ"]},
-    "Аспарагиновая к-та": {"codons": ["ГАУ", "ГАЦ"], "runes": ["*", "1"]},
-    "Валин": {"codons": ["ГУУ", "ГУЦ", "ГУА", "ГУГ"], "runes": ["𐰓", "9", "ς"]},
-    "Глютамин": {"codons": ["ЦАА", "ЦАГ"], "runes": ["Λ", "П"]},
-    "Глютаминовая к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
-    "Гистидин": {"codons": ["ЦАУ", "ЦАЦ"], "runes": ["𐰓"]},
-    "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺"]}, 
-    "Стоп-кодон": {"codons": ["УАА"], "runes": ["33"]},
-    "Изолейцин": {"codons": ["АУУ", "АУЦ", "АУА"], "runes": ["I|", "Є"]},
-    "Лейцин": {"codons": ["УУА", "УУГ", "ЦУУ", "ЦУЦ", "ЦУА", "ЦУГ"], "runes": ["Y", "J"]},
-    "Лизин": {"codons": ["ААА", "ААГ"], "runes": ["↑"]},
-    "Пирролизин": {"codons": ["УАГ"], "runes": ["ᛟ"]},
-    "Метионин": {"codons": ["АУГ"], "runes": ["Г"]},
-    "Пролин": {"codons": ["ЦЦУ", "ЦЦГ", "ЦЦЦ", "ЦЦА"], "runes": ["ᛉ"]},
-    "Серин": {"codons": ["УЦУ", "УЦГ", "УЦЦ", "УЦА", "АГУ", "АГЦ"], "runes": ["D", "☺"]},
-    "Триптофан": {"codons": ["УГГ"], "runes": ["⌂"]},
-    "Тирозин": {"codons": ["УАУ", "УАЦ"], "runes": ["ᛒ", "ᛃ"]},
-    "Треонин": {"codons": ["АЦУ", "АЦГ", "АЦЦ", "АЦА"], "runes": ["ㅋ", "N", "◁", "F"]},
-    "Фенилаланин": {"codons": ["УУУ", "УУЦ"], "runes": ["X", "|"]},
-    "Цистеин": {"codons": ["УГУ", "УГЦ"], "runes": ["︽", "h"]},
-    "Селеноцистеин": {"codons": ["УГА"], "runes": ["M"]}
-}
-
 class Ritual(StatesGroup):
     waiting_for_blue = State()
     waiting_for_green = State()
@@ -175,70 +161,6 @@ class Ritual(StatesGroup):
     waiting_for_rune_choice = State()
     waiting_for_carousel = State()
     waiting_for_payment = State()
-
-def load_db():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r") as f: return json.load(f)
-    return {}
-
-def save_db(data):
-    with open(DB_FILE, "w") as f: json.dump(data, f)
-
-def empty_user_record(now: datetime) -> dict:
-    return {
-        "trial_end": now.isoformat(),
-        "next_ritual_time": now.isoformat(),
-        "notified": 0,
-        "paid": False,
-        "referrer": None,
-        "referrals_count": 0,
-        "ritual_step": 0,
-        "last_active": now.isoformat(),
-        "notified_incomplete": False,
-        "notified_12h": False,
-        "notified_inactive": False,
-        "special_day_notified": ""
-    }
-
-def ensure_user_record(db: dict, user_id: str, now: datetime | None = None) -> dict:
-    now = now or datetime.now()
-    data = db.get(user_id)
-    if not isinstance(data, dict):
-        data = empty_user_record(now)
-        db[user_id] = data
-    return data
-
-def days_left_from(trial_end: datetime, now: datetime) -> int:
-    time_left = trial_end - now
-    if time_left.total_seconds() <= 0:
-        return 0
-    return int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0)
-
-def restore_user_access(db: dict, user_id: str, days: int, now: datetime | None = None) -> dict:
-    now = now or datetime.now()
-    data = ensure_user_record(db, user_id, now)
-    current_end = datetime.fromisoformat(data.get("trial_end", now.isoformat()))
-    start_date = current_end if current_end > now else now
-    data["trial_end"] = (start_date + timedelta(days=days)).isoformat()
-    data["notified"] = 0
-    data["paid"] = True
-    return data
-
-def format_access_status(user_id: str, data: dict, now: datetime | None = None) -> str:
-    now = now or datetime.now()
-    trial_end = datetime.fromisoformat(data.get("trial_end", now.isoformat()))
-    next_ritual = datetime.fromisoformat(data.get("next_ritual_time", now.isoformat()))
-    left = days_left_from(trial_end, now)
-    active = now < trial_end
-    ritual_ready = now >= next_ritual
-    return (
-        f"👤 ID: `{user_id}`\n"
-        f"{'✅ Доступ активен' if active else '🔒 Доступ неактивен'}\n"
-        f"📅 До: `{trial_end.strftime('%Y-%m-%d %H:%M')}`\n"
-        f"⏳ Осталось дней: **{left}**\n"
-        f"🔮 Обряд: {'можно провести' if ritual_ready else 'ожидание таймера'}\n"
-        f"💳 paid: `{data.get('paid', False)}`"
-    )
 
 def get_main_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -261,57 +183,8 @@ def get_bottom_kb():
             ]
         ],
         resize_keyboard=True,
-        is_persistent=True 
+        is_persistent=True
     )
-
-def get_greeting_text(user_data, now):
-    trial_end = datetime.fromisoformat(user_data.get("trial_end", now.isoformat()))
-    time_left = trial_end - now
-    days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
-    greeting = "Приветствую. Это Ваш цифровой помощник в достижении гармонии. Используем мудрость салгын кут и силу рунических символов, чтобы помочь вам восполнить утраченный ресурс.\n\n"
-    if now < trial_end:
-        greeting += f"🎁 **У вас активно {days_left} дня доступа!**\n\n"
-    else:
-        greeting += "⚠️ **Ваша подписка неактивна.**\nПройдите обряд, чтобы выбрать тариф и получить доступ к результатам.\n\n"
-    return greeting
-
-RUNE_IMAGES = {
-    "Аргинин":             ["Аргинин2.jpg",             "Аргинин.jpg"],               
-    "Аланин":              ["Аланин4.jpg",              "Аланин3.jpg",              "Аланин2.jpg",   "Аланин.jpg"], 
-    "Аспарагин":           ["Аспарагин.jpg"],
-    "Аспарагиновая к-та":  ["Аспарагиновая к-та.jpg", "Аспарагиновая к-та2.jpg"],
-    "Валин":               ["Валин2.jpg",               "Валин3.jpg",               "Валин.jpg"], 
-    "Глютамин":            ["Глютамин.jpg",            "Глютамин2.jpg"],
-    "Глютаминовая к-та":   ["Глютаминовая к-та.jpg"],
-    "Гистидин":            ["Гистидин.jpg"],
-    "Глицин":              ["Глицин.jpg"],                                           
-    "Стоп-кодон":          ["Стоповой кодон.jpg"],
-    "Изолейцин":           ["Изолейцин2.jpg",           "Изолейцин.jpg"],             
-    "Лейцин":              ["Лейцин.jpg",              "Лейцин2.jpg"],
-    "Лизин":               ["Лизин.jpg"],
-    "Пирролизин":          ["Пирролизин.jpg"],
-    "Метионин":            ["Метионин.jpg"],
-    "Пролин":              ["Пролин.jpg"],
-    "Серин":               ["Серин.jpg",               "Серин2.jpg"],
-    "Триптофан":           ["Триптофан.jpg"],
-    "Тирозин":             ["Тирозин.jpg",             "Тирозин2.jpg"],
-    "Треонин":             ["Треонин.jpg",             "Треонин2.jpg",             "Треонин3.jpg",  "Треонин4.jpg"],
-    "Фенилаланин":         ["Фенилаланин.jpg",         "Фенилаланин 2.jpg"],
-    "Цистеин":             ["Цистеин.jpg",             "Цистеин.jpg"],               
-    "Селеноцистеин":       ["Селеноцистеин.jpg"],
-}
-
-def find_rune_image(amino: str, index: int) -> str | None:
-    files = RUNE_IMAGES.get(amino, [])
-    if not files:
-        return None
-    if index >= len(files) or files[index] is None:
-        img_name = files[0]
-    else:
-        img_name = files[index]
-        
-    path = os.path.join("images", "runes", img_name)
-    return path if os.path.exists(path) else None
 
 def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
     nav_row = []
