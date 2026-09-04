@@ -378,6 +378,39 @@ class MaxApi:
                 raise RuntimeError(f"PATCH {path} {resp.status}: {text[:300]}")
             return json.loads(text) if text else {}
 
+    async def _post_cdn(self, url: str, path: str) -> dict:
+        import aiohttp
+
+        with open(path, "rb") as fh:
+            content = fh.read()
+        mime = "video/mp4" if path.lower().endswith(".mp4") else "application/octet-stream"
+        last_error = None
+        for label, ssl_ctx in (("public-ca", ssl.create_default_context()), ("insecure", unverified_ssl())):
+            try:
+                timeout = aiohttp.ClientTimeout(total=60)
+                connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+                form = aiohttp.FormData()
+                form.add_field("data", content, filename=os.path.basename(path), content_type=mime)
+                async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+                    async with session.post(url, data=form) as uploaded:
+                        body = await uploaded.text()
+                        logging.info("MAX CDN %s %s -> %s %s", label, path, uploaded.status, body[:180])
+                        if uploaded.status >= 400:
+                            last_error = RuntimeError(f"CDN {uploaded.status}: {body[:300]}")
+                            continue
+                        if not body:
+                            return {}
+                        try:
+                            return json.loads(body)
+                        except json.JSONDecodeError:
+                            return {"raw": body}
+            except Exception as e:
+                last_error = e
+                logging.warning("MAX CDN %s ошибка %s: %s", label, path, e)
+        if last_error:
+            raise last_error
+        return {}
+
     async def upload_file(self, path: str, media_type: str) -> str:
         cached = load_media_cache()
         key = f"{media_type}:{os.path.abspath(path)}"
@@ -389,22 +422,12 @@ class MaxApi:
             if resp.status >= 400:
                 raise RuntimeError(f"uploads {resp.status}: {raw[:300]}")
             init = json.loads(raw) if raw else {}
+        logging.info("MAX /uploads %s -> %s", media_type, str(init)[:240])
         url = init.get("url")
         token = extract_upload_token(init)
         if not url:
             raise RuntimeError(f"uploads без url: {init}")
-        import aiohttp
-
-        with open(path, "rb") as fh:
-            content = fh.read()
-        form = aiohttp.FormData()
-        mime = "video/mp4" if path.lower().endswith(".mp4") else "application/octet-stream"
-        form.add_field("data", content, filename=os.path.basename(path), content_type=mime)
-        async with self.session.post(url, data=form) as uploaded:
-            body = await uploaded.text()
-            if uploaded.status >= 400:
-                raise RuntimeError(f"file upload {uploaded.status}: {body[:300]}")
-            parsed = json.loads(body) if body else {}
+        parsed = await self._post_cdn(url, path)
         token = extract_upload_token(parsed) or token
         if not token:
             raise RuntimeError(f"нет token после загрузки {path}: {parsed}")
@@ -421,7 +444,29 @@ class MaxApi:
             return {"type": "video", "payload": {"token": token}}
         except Exception:
             logging.exception("не удалось загрузить видео %s", path)
+        try:
+            token = await asyncio.wait_for(self.upload_file(path, "file"), timeout=45)
+            return {"type": "file", "payload": {"token": token}}
+        except Exception:
+            logging.exception("не удалось загрузить файл %s", path)
             return None
+
+    async def send_gif(self, user_id: int, path: str):
+        for attempt in range(2):
+            gif = await self.video_att(path)
+            if not gif:
+                logging.error("MAX нет вложения для %s", path)
+                return
+            try:
+                await asyncio.sleep(1 if attempt else 0)
+                await self.send(user_id, "🎬", media=[gif])
+                return
+            except Exception:
+                logging.exception("MAX не отправил гифку %s попытка %s, сброс кэша", path, attempt + 1)
+                cached = load_media_cache()
+                for prefix in ("video:", "file:"):
+                    cached.pop(f"{prefix}{os.path.abspath(path)}", None)
+                save_media_cache(cached)
 
     async def image_att(self, filename: str | None = None, amino: str | None = None, index: int = 0) -> dict | None:
         local = None
@@ -534,8 +579,8 @@ async def cmd_start(api: MaxApi, user_id: int, payload: str | None = None):
                 pass
     text = get_greeting_text(data, datetime.now())
     text += "Нажмите кнопку ниже или напишите «обряд»."
-    gif = await api.video_att(GIF_START)
-    await api.send(user_id, text, menu_kb(), media=[gif] if gif else None)
+    await api.send(user_id, text, menu_kb())
+    await api.send_gif(user_id, GIF_START)
 
 
 async def start_ritual(api: MaxApi, user_id: int):
@@ -561,13 +606,12 @@ async def start_ritual(api: MaxApi, user_id: int):
     data["last_active"] = now.isoformat()
     save_db(db)
     fsm_set(user_id, {"step": "blue", "complex": 1, "runes": [], "aminos": [], "images": []})
-    gif = await api.video_att(GIF_RITUAL)
     await api.send(
         user_id,
         "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **синюю** грань. Сколько точек?",
         kb(throw_row("🔵")),
-        media=[gif] if gif else None,
     )
+    await api.send_gif(user_id, GIF_RITUAL)
 
 
 async def on_throw(api: MaxApi, user_id: int, value: str):
