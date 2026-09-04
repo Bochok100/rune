@@ -76,8 +76,12 @@ from ritual_data import (
     format_access_status,
     get_greeting_text,
     load_db,
+    parse_ritual_admin_args,
     restore_user_access,
+    ritual_unlimited,
     save_db,
+    schedule_next_ritual,
+    set_ritual_mode,
 )
 
 FILE_IDS_PATH = "file_ids.json"
@@ -269,19 +273,33 @@ async def cmd_allow_ritual(message: Message, command: CommandObject):
     if message.from_user.id != MY_ID:
         return
     args = (command.args or "").split()
-    target_id = args[0] if args else str(message.from_user.id)
-    if not target_id.isdigit():
-        await send_html(message.answer, text="Использование: `/allow_ritual <telegram_id>`")
+    parsed = parse_ritual_admin_args(args, str(message.from_user.id))
+    if not parsed:
+        await send_html(
+            message.answer,
+            text=(
+                "Обряд:\n"
+                "`/allow_ritual` — сбросить таймер себе\n"
+                "`/allow_ritual inf` — бесконечные обряды себе\n"
+                "`/allow_ritual off` — снова лимит 12 часов\n"
+                "`/allow_ritual <id>` — сбросить таймер человеку\n"
+                "`/allow_ritual <id> inf` — бесконечные обряды\n"
+                "`/allow_ritual <id> off` — выключить безлимит"
+            ),
+        )
         return
+    target_id, mode = parsed
     db = load_db()
     now = datetime.now()
-    data = ensure_user_record(db, target_id, now)
-    data["next_ritual_time"] = now.isoformat()
-    data["ritual_step"] = 0
-    data["notified_12h"] = False
-    data["notified_incomplete"] = False
+    data = set_ritual_mode(db, target_id, mode, now)
     save_db(db)
-    await send_html(message.answer, text=f"🔮 Таймер обряда сброшен для `{target_id}`.")
+    if mode == "unlimited":
+        text = f"🔮 Безлимит обрядов включён для `{target_id}`."
+    elif mode == "off":
+        text = f"🔮 Безлимит выключен для `{target_id}`. Снова пауза 12 часов."
+    else:
+        text = f"🔮 Таймер обряда сброшен для `{target_id}`."
+    await send_html(message.answer, text=f"{text}\n\n{format_access_status(target_id, data)}")
 
 @dp.message(Command("check_images"))
 async def cmd_check_images(message: Message):
@@ -370,7 +388,7 @@ async def daily_notifier():
                     days_left = int(time_to_end.total_seconds() / 86400) + (1 if time_to_end.total_seconds() % 86400 > 0 else 0)
                     sub_notified = data.get("notified", 0)
 
-                    if now >= next_ritual and not data["notified_12h"]:
+                    if now >= next_ritual and not data["notified_12h"] and not ritual_unlimited(data):
                         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]])
                         await bot.send_message(
                             chat_id=int(user_id),
@@ -558,7 +576,7 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
     now = datetime.now()
     next_ritual = datetime.fromisoformat(user_data.get("next_ritual_time", now.isoformat()))
     
-    if now < next_ritual:
+    if not ritual_unlimited(user_data) and now < next_ritual:
         time_left = next_ritual - now
         hours, remainder = divmod(time_left.seconds, 3600)
         minutes, _ = divmod(remainder, 60)
@@ -747,7 +765,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         await state.set_state(Ritual.waiting_for_blue)
     else:
         # ОБРЯД ЗАВЕРШЕН — ОБНУЛЯЕМ ШАГ
-        user_data["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
+        schedule_next_ritual(user_data, now)
         user_data["ritual_step"] = 0
         user_data["notified_12h"] = False
         user_data["notified_incomplete"] = False
@@ -840,7 +858,7 @@ async def successful_payment(message: Message, state: FSMContext):
             start_date = current_end if current_end > now else now
             
             db[user_id]["trial_end"] = (start_date + timedelta(days=days_to_add)).isoformat()
-            db[user_id]["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
+            schedule_next_ritual(db[user_id], now)
             db[user_id]["notified"] = 0 
             save_db(db)
             

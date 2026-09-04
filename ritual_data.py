@@ -85,6 +85,7 @@ def empty_user_record(now: datetime) -> dict:
         "notified_12h": False,
         "notified_inactive": False,
         "special_day_notified": "",
+        "unlimited_rituals": False,
     }
 
 
@@ -115,19 +116,74 @@ def restore_user_access(db: dict, user_id: str, days: int, now: datetime | None 
     return data
 
 
+def ritual_unlimited(data: dict) -> bool:
+    return bool(data.get("unlimited_rituals"))
+
+
+def schedule_next_ritual(data: dict, now: datetime | None = None, hours: int = 12) -> None:
+    now = now or datetime.now()
+    if ritual_unlimited(data):
+        data["next_ritual_time"] = now.isoformat()
+    else:
+        data["next_ritual_time"] = (now + timedelta(hours=hours)).isoformat()
+
+
+def set_ritual_mode(db: dict, user_id: str, mode: str, now: datetime | None = None) -> dict:
+    now = now or datetime.now()
+    data = ensure_user_record(db, user_id, now)
+    if mode == "unlimited":
+        data["unlimited_rituals"] = True
+        data["next_ritual_time"] = now.isoformat()
+        data["ritual_step"] = 0
+    elif mode == "off":
+        data["unlimited_rituals"] = False
+    else:
+        data["next_ritual_time"] = now.isoformat()
+        data["ritual_step"] = 0
+        data["notified_12h"] = False
+        data["notified_incomplete"] = False
+    return data
+
+
+def parse_ritual_admin_args(args: list[str], self_id: str) -> tuple[str, str] | None:
+    on = {"inf", "unlimited", "on", "forever"}
+    off = {"off", "stop"}
+    parts = [a.strip() for a in args if a.strip()]
+    if not parts:
+        return self_id, "once"
+    if len(parts) == 1:
+        token = parts[0].lower()
+        if token in on:
+            return self_id, "unlimited"
+        if token in off:
+            return self_id, "off"
+        if parts[0].isdigit():
+            return parts[0], "once"
+        return None
+    if len(parts) == 2 and parts[0].isdigit():
+        token = parts[1].lower()
+        if token in on:
+            return parts[0], "unlimited"
+        if token in off:
+            return parts[0], "off"
+        return None
+    return None
+
+
 def format_access_status(user_id: str, data: dict, now: datetime | None = None) -> str:
     now = now or datetime.now()
     trial_end = datetime.fromisoformat(data.get("trial_end", now.isoformat()))
     next_ritual = datetime.fromisoformat(data.get("next_ritual_time", now.isoformat()))
     left = days_left_from(trial_end, now)
     active = now < trial_end
-    ritual_ready = now >= next_ritual
+    ritual_ready = ritual_unlimited(data) or now >= next_ritual
+    unlimited = ritual_unlimited(data)
     return (
         f"👤 ID: `{user_id}`\n"
         f"{'✅ Доступ активен' if active else '🔒 Доступ неактивен'}\n"
         f"📅 До: `{trial_end.strftime('%Y-%m-%d %H:%M')}`\n"
         f"⏳ Осталось дней: **{left}**\n"
-        f"🔮 Обряд: {'можно провести' if ritual_ready else 'ожидание таймера'}\n"
+        f"🔮 Обряд: {'без лимита' if unlimited else ('можно провести' if ritual_ready else 'ожидание таймера')}\n"
         f"💳 paid: `{data.get('paid', False)}`"
     )
 
