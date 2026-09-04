@@ -148,8 +148,22 @@ async def cached_bot_username() -> str:
     return _bot_username
 
 async def send_cached_animation(message: Message, path: str, **kwargs):
-    msg = await send_html(message.answer_animation, animation=media_ref(path), **kwargs)
-    fid = (msg.animation.file_id if msg.animation else None) or (msg.video.file_id if msg.video else None)
+    try:
+        msg = await send_html(message.answer_animation, animation=media_ref(path), **kwargs)
+    except TelegramBadRequest:
+        logging.warning("Telegram не принял кэш анимации %s, шлём файл заново", path)
+        ids = load_file_ids()
+        ids.pop(path, None)
+        with open(FILE_IDS_PATH, "w") as f:
+            json.dump(ids, f)
+        try:
+            msg = await send_html(message.answer_animation, animation=FSInputFile(path), **kwargs)
+        except TelegramBadRequest:
+            logging.warning("Telegram animation не прошёл, пробуем video %s", path)
+            msg = await send_html(message.answer_video, video=FSInputFile(path), **kwargs)
+    fid = (msg.animation.file_id if getattr(msg, "animation", None) else None) or (
+        msg.video.file_id if getattr(msg, "video", None) else None
+    )
     if fid:
         remember_file_id(path, fid)
     return msg
