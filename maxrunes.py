@@ -39,6 +39,7 @@ MARKER_FILE = "max_marker.txt"
 MEDIA_CACHE_FILE = "max_media.json"
 GIF_START = "gif1_v2.mp4"
 GIF_RITUAL = "gif2_v2.mp4"
+BOT_META = {"username": "", "user_id": None}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -201,6 +202,26 @@ def link(text: str, url: str) -> dict:
     return {"type": "link", "text": text, "url": url}
 
 
+def bot_username() -> str:
+    return (env("MAX_BOT_USERNAME") or BOT_META.get("username") or "").lstrip("@")
+
+
+def ref_link(user_id: int) -> str:
+    name = bot_username()
+    if not name:
+        return f"https://max.ru/?start=ref_{user_id}"
+    return f"https://max.ru/{name}?start=ref_{user_id}"
+
+
+def app_deeplink(payload: str = "") -> str:
+    name = bot_username()
+    if not name:
+        return miniapp_url("app.html")
+    if payload:
+        return f"https://max.ru/{name}?startapp={payload}"
+    return f"https://max.ru/{name}?startapp"
+
+
 def miniapp_url(page: str = "app.html") -> str:
     configured = env("MAX_MINIAPP_URL")
     if configured and page in {"app.html", ""}:
@@ -208,9 +229,15 @@ def miniapp_url(page: str = "app.html") -> str:
     return f"{PAGES}/{page.lstrip('/')}"
 
 
-def open_app(text: str, page: str, payload: str = "") -> dict:
-    """Кнопка всплывающего мини-приложения MAX (не браузер)."""
-    item = {"type": "open_app", "text": text, "web_app": miniapp_url(page)}
+def open_app(text: str, payload: str = "") -> dict:
+    """Открывает мини-приложение внутри MAX. web_app — username бота, не URL страницы."""
+    item = {"type": "open_app", "text": text}
+    name = bot_username()
+    if name:
+        item["web_app"] = name
+    bot_id = BOT_META.get("user_id")
+    if bot_id:
+        item["contact_id"] = int(bot_id)
     if payload:
         item["payload"] = payload
     return item
@@ -222,11 +249,11 @@ def throw_row(color_emoji: str) -> list:
 
 def menu_kb():
     return kb(
-        [open_app("📖 Об авторе", "author.html", "author")],
-        [open_app("📜 История метода", "method.html", "method")],
-        [open_app("🌬️ Буор, Ийэ и Салгын Кут", "kut.html", "kut")],
+        [open_app("📖 Об авторе", "author")],
+        [open_app("📜 История метода", "method")],
+        [open_app("🌬️ Буор, Ийэ и Салгын Кут", "kut")],
         [btn("🔮 Начать обряд", "start_ritual")],
-        [open_app("🕯 Подготовка", "prep.html", "prep"), open_app("💬 Отзывы", "reviews.html", "reviews")],
+        [open_app("🕯 Подготовка", "prep"), open_app("💬 Отзывы", "reviews")],
     )
 
 
@@ -291,7 +318,8 @@ def demote_open_app(attachments: list) -> list:
             new_row = []
             for item in row:
                 if item.get("type") == "open_app":
-                    new_row.append(link(item.get("text", "Открыть"), item.get("web_app") or miniapp_url()))
+                    payload = item.get("payload") or ""
+                    new_row.append(link(item.get("text", "Открыть"), app_deeplink(payload)))
                 else:
                     new_row.append(item)
             rows.append(new_row)
@@ -503,7 +531,10 @@ async def start_ritual(api: MaxApi, user_id: int):
         await api.send(
             user_id,
             f"⏳ Обряд уже проведен! Следующий через {hours} ч. {minutes} мин.\n"
-            f"Пригласите друга: `https://max.ru/?start=ref_{user_id}`",
+            f"Пригласите друга по ссылке:\n{ref_link(user_id)}",
+            kb(
+                [{"type": "clipboard", "text": "📋 Скопировать ссылку", "payload": ref_link(user_id)}],
+            ),
         )
         return
     data["ritual_step"] = 1
@@ -631,7 +662,7 @@ async def pick_rune(api: MaxApi, user_id: int, st: dict, index: int):
         att = await api.image_att(filename=images[idx] if idx < len(images) else None)
         if att:
             photos.append(att)
-    result_btn = [open_app("📖 Получить результаты", f"result.html?{q}", "result")]
+    result_btn = [open_app("📖 Получить результаты", "result")]
     if now < trial_end:
         await api.send(
             user_id,
@@ -800,6 +831,10 @@ async def main():
                 )
                 raise
             logging.info("MAX бот онлайн: @%s id=%s", me.get("username"), me.get("user_id"))
+            BOT_META["username"] = (me.get("username") or "").lstrip("@")
+            BOT_META["user_id"] = me.get("user_id")
+            if env("MAX_BOT_USERNAME"):
+                BOT_META["username"] = env("MAX_BOT_USERNAME").lstrip("@")
             try:
                 await api.patch("/me/commands", json_body={
                     "commands": [
