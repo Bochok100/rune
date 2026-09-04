@@ -28,6 +28,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
+API = "https://platform-api2.max.ru"
+ENV_PATH = os.path.join(BASE_DIR, ".env")
 current_chat_id: ContextVar[int | None] = ContextVar("current_chat_id", default=None)
 FSM_FILE = "max_fsm.json"
 MARKER_FILE = "max_marker.txt"
@@ -38,6 +40,35 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 def env(name: str, default: str = "") -> str:
     value = os.getenv(name, default)
     return value.strip().replace('"', "").replace("'", "") if value else default
+
+
+def read_env_file_value(path: str, *names: str) -> str:
+    if not os.path.exists(path):
+        return ""
+    try:
+        raw = open(path, "r", encoding="utf-8-sig").read()
+    except OSError:
+        return ""
+    wanted = {n.lower() for n in names}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.lower().startswith("export "):
+            line = line[7:].strip()
+        key, _, val = line.partition("=")
+        if key.strip().lower() in wanted:
+            return val.strip().strip('"').strip("'")
+    return ""
+
+
+def max_token() -> str:
+    load_dotenv(ENV_PATH, override=True)
+    for name in ("MAX_BOT_TOKEN", "MAX_TOKEN", "MAX_ACCESS_TOKEN"):
+        token = env(name)
+        if token and "замените" not in token.lower():
+            return token
+    return read_env_file_value(ENV_PATH, "MAX_BOT_TOKEN", "MAX_TOKEN", "MAX_ACCESS_TOKEN")
 
 
 def db_key(user_id: int) -> str:
@@ -448,11 +479,20 @@ async def handle_update(api: MaxApi, update: dict):
 
 async def wait_for_token() -> str:
     while True:
-        load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
-        token = env("MAX_BOT_TOKEN")
-        if token and "замените" not in token:
+        token = max_token()
+        if token:
+            logging.info(
+                "MAX токен найден в %s, длина %s",
+                ENV_PATH,
+                len(token),
+            )
             return token
-        logging.warning("MAX_BOT_TOKEN пустой — жду .env (раз в 20 сек). Telegram-бот не трогаю.")
+        exists = os.path.exists(ENV_PATH)
+        logging.warning(
+            "MAX_BOT_TOKEN не найден (файл .env %s). Жду 20 сек. Путь: %s",
+            "есть" if exists else "НЕТ",
+            ENV_PATH,
+        )
         await asyncio.sleep(20)
 
 
@@ -463,7 +503,15 @@ async def main():
     timeout = aiohttp.ClientTimeout(total=90)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         api = MaxApi(session, token)
-        me = await api.get("/me")
+        try:
+            me = await api.get("/me")
+        except Exception:
+            logging.error(
+                "MAX не принял токен (401) или бот ещё на модерации. "
+                "Проверьте MAX_BOT_TOKEN в %s и статус в кабинете.",
+                ENV_PATH,
+            )
+            raise
         logging.info("MAX бот онлайн: @%s id=%s", me.get("username"), me.get("user_id"))
         try:
             await api.patch("/me/commands", json_body={
