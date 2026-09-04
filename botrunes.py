@@ -463,87 +463,99 @@ async def daily_notifier():
     }
 
     while True:
-        db = load_db()
-        now = datetime.now()
-        today_str = now.strftime("%m-%d")
-        changed = False
-        
-        for user_id, data in db.items():
-            if isinstance(data, str): continue
-            
-            # --- Инициализация переменных для старых пользователей ---
-            if 'notified_12h' not in data: data['notified_12h'] = False
-            if 'ritual_step' not in data: data['ritual_step'] = 0
-            if 'last_active' not in data: data['last_active'] = now.isoformat()
-            if 'notified_incomplete' not in data: data['notified_incomplete'] = False
-            if 'notified_inactive' not in data: data['notified_inactive'] = False
-            if 'special_day_notified' not in data: data['special_day_notified'] = ""
-            
-            trial_end = datetime.fromisoformat(data['trial_end'])
-            next_ritual = datetime.fromisoformat(data['next_ritual_time'])
-            last_active = datetime.fromisoformat(data['last_active'])
-            
-            time_to_end = trial_end - now
-            days_left = int(time_to_end.total_seconds() / 86400) + (1 if time_to_end.total_seconds() % 86400 > 0 else 0)
-            sub_notified = data.get('notified', 0)
-            
-            try:
-                # 1. ОСНОВНОЕ НАПОМИНАНИЕ (ЧЕРЕЗ 12 ЧАСОВ)
-                if now >= next_ritual and not data['notified_12h']:
-                    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]])
-                    await bot.send_message(
-                        chat_id=int(user_id), 
-                        text="🌬️ Сегодня доступен новый расклад.\n\nПодготовьте палочки и выполните практику.",
-                        reply_markup=kb
-                    )
-                    data['notified_12h'] = True
-                    data['notified_inactive'] = False # Обнуляем счетчик застоя
-                    changed = True
+        try:
+            db = load_db()
+            now = datetime.now()
+            today_str = now.strftime("%m-%d")
+            changed = False
 
-                # 2. НАПОМИНАНИЕ О НЕЗАВЕРШЕННОМ РАСКЛАДЕ (ЕСЛИ ПРОШЕЛ 1 ЧАС)
-                if data['ritual_step'] > 0 and (now - last_active).total_seconds() > 3600 and not data['notified_incomplete']:
-                    step = data['ritual_step'] - 1 # 1-й шаг это 0 бросков, 2-й шаг это 1 бросок и тд.
-                    await bot.send_message(
-                        chat_id=int(user_id), 
-                        text=f"Вы выполнили только {step} из 3 бросков.\n\nЗавершите сегодняшний расклад."
-                    )
-                    data['notified_incomplete'] = True
-                    changed = True
+            for user_id, data in db.items():
+                if not str(user_id).isdigit() or not isinstance(data, dict):
+                    continue
 
-                # 3. НАПОМИНАНИЯ О ПОДПИСКЕ (За 3 дня и за 1 день)
-                if days_left == 3 and sub_notified < 1:
-                    await bot.send_message(int(user_id), "⚠️ Ваша подписка заканчивается через 3 дня.")
-                    data['notified'] = 1
-                    changed = True
-                elif days_left == 1 and sub_notified < 2:
-                    await bot.send_message(int(user_id), "⏳ Остался 1 день доступа.")
-                    data['notified'] = 2
-                    changed = True
-                elif days_left <= 0 and sub_notified < 3:
-                    await bot.send_message(int(user_id), "🔒 Ваша подписка завершена.\nВы можете продлить доступ, пройдя новый обряд.")
-                    data['notified'] = 3
-                    changed = True
+                try:
+                    if "trial_end" not in data:
+                        data["trial_end"] = now.isoformat()
+                        changed = True
+                    if "next_ritual_time" not in data:
+                        data["next_ritual_time"] = now.isoformat()
+                        changed = True
+                    if "notified_12h" not in data:
+                        data["notified_12h"] = False
+                    if "ritual_step" not in data:
+                        data["ritual_step"] = 0
+                    if "last_active" not in data:
+                        data["last_active"] = now.isoformat()
+                    if "notified_incomplete" not in data:
+                        data["notified_incomplete"] = False
+                    if "notified_inactive" not in data:
+                        data["notified_inactive"] = False
+                    if "special_day_notified" not in data:
+                        data["special_day_notified"] = ""
 
-                # 4. ВОЗВРАТ ПОЛЬЗОВАТЕЛЯ (ЕСЛИ ПРОШЛО 7 ДНЕЙ)
-                if now >= next_ritual + timedelta(days=7) and not data['notified_inactive']:
-                    await bot.send_message(
-                        int(user_id), 
-                        "Вы давно не выполняли расклад.\n\nВозможно, сегодня подходящий день вернуться к практике."
-                    )
-                    data['notified_inactive'] = True
-                    changed = True
+                    trial_end = datetime.fromisoformat(data["trial_end"])
+                    next_ritual = datetime.fromisoformat(data["next_ritual_time"])
+                    last_active = datetime.fromisoformat(data["last_active"])
 
-                # 5. ОСОБЫЕ ДНИ (ПРАЗДНИКИ/СОЛНЦЕСТОЯНИЯ)
-                if today_str in SPECIAL_DAYS and data['special_day_notified'] != today_str:
-                    await bot.send_message(int(user_id), SPECIAL_DAYS[today_str])
-                    data['special_day_notified'] = today_str
-                    changed = True
+                    time_to_end = trial_end - now
+                    days_left = int(time_to_end.total_seconds() / 86400) + (1 if time_to_end.total_seconds() % 86400 > 0 else 0)
+                    sub_notified = data.get("notified", 0)
 
-            except Exception as e:
-                logging.error(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
-                
-        if changed: save_db(db)
-        await asyncio.sleep(3600) # Бот проверяет всех пользователей 1 раз в час
+                    if now >= next_ritual and not data["notified_12h"]:
+                        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]])
+                        await bot.send_message(
+                            chat_id=int(user_id),
+                            text="🌬️ Сегодня доступен новый расклад.\n\nПодготовьте палочки и выполните практику.",
+                            reply_markup=kb
+                        )
+                        data["notified_12h"] = True
+                        data["notified_inactive"] = False
+                        changed = True
+
+                    if data["ritual_step"] > 0 and (now - last_active).total_seconds() > 3600 and not data["notified_incomplete"]:
+                        step = data["ritual_step"] - 1
+                        await bot.send_message(
+                            chat_id=int(user_id),
+                            text=f"Вы выполнили только {step} из 3 бросков.\n\nЗавершите сегодняшний расклад."
+                        )
+                        data["notified_incomplete"] = True
+                        changed = True
+
+                    if days_left == 3 and sub_notified < 1:
+                        await bot.send_message(int(user_id), "⚠️ Ваша подписка заканчивается через 3 дня.")
+                        data["notified"] = 1
+                        changed = True
+                    elif days_left == 1 and sub_notified < 2:
+                        await bot.send_message(int(user_id), "⏳ Остался 1 день доступа.")
+                        data["notified"] = 2
+                        changed = True
+                    elif days_left <= 0 and sub_notified < 3:
+                        await bot.send_message(int(user_id), "🔒 Ваша подписка завершена.\nВы можете продлить доступ, пройдя новый обряд.")
+                        data["notified"] = 3
+                        changed = True
+
+                    if now >= next_ritual + timedelta(days=7) and not data["notified_inactive"]:
+                        await bot.send_message(
+                            int(user_id),
+                            "Вы давно не выполняли расклад.\n\nВозможно, сегодня подходящий день вернуться к практике."
+                        )
+                        data["notified_inactive"] = True
+                        changed = True
+
+                    if today_str in SPECIAL_DAYS and data["special_day_notified"] != today_str:
+                        await bot.send_message(int(user_id), SPECIAL_DAYS[today_str])
+                        data["special_day_notified"] = today_str
+                        changed = True
+
+                except Exception as e:
+                    logging.error("Ошибка уведомления пользователю %s: %s", user_id, e)
+
+            if changed:
+                save_db(db)
+        except Exception:
+            logging.exception("Сбой цикла напоминаний")
+
+        await asyncio.sleep(3600)
 
 @dp.message(F.web_app_data)
 async def web_app_data_handler(message: Message, state: FSMContext):
