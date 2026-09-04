@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import urllib.parse
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
@@ -27,7 +28,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
-API = "https://platform-api2.max.ru"
+current_chat_id: ContextVar[int | None] = ContextVar("current_chat_id", default=None)
 FSM_FILE = "max_fsm.json"
 MARKER_FILE = "max_marker.txt"
 
@@ -130,11 +131,29 @@ class MaxApi:
                 resp.raise_for_status()
             return json.loads(text) if text else {}
 
-    async def send(self, user_id: int, text: str, attachments=None):
-        body = {"text": text, "format": "markdown"}
+    async def send(self, user_id: int, text: str, attachments=None, chat_id=None):
+        chat_id = chat_id or current_chat_id.get()
+        body = {"text": text}
         if attachments:
             body["attachments"] = attachments
-        return await self.post("/messages", params={"user_id": user_id}, json_body=body)
+        attempts = []
+        if chat_id:
+            attempts.append({"chat_id": chat_id})
+        attempts.append({"user_id": user_id})
+        last_error = None
+        for params in attempts:
+            try:
+                return await self.post("/messages", params=params, json_body=body)
+            except Exception as e:
+                last_error = e
+                logging.warning("MAX send %s failed: %s", params, e)
+                if attachments:
+                    try:
+                        return await self.post("/messages", params=params, json_body={"text": text})
+                    except Exception as e2:
+                        last_error = e2
+        if last_error:
+            raise last_error
 
     async def answer(self, callback_id: str, notification: str = "Ок"):
         try:
@@ -376,42 +395,55 @@ async def handle_text(api: MaxApi, user_id: int, text: str):
     await cmd_start(api, user_id)
 
 
-def extract_user_id(update: dict) -> int | None:
-    if "user" in update and isinstance(update["user"], dict):
-        return update["user"].get("user_id")
+def extract_ids(update: dict) -> tuple[int | None, int | None]:
+    user_id = None
+    chat_id = update.get("chat_id")
+    if isinstance(update.get("user"), dict):
+        user_id = update["user"].get("user_id")
     cb = update.get("callback") or {}
     if isinstance(cb, dict) and isinstance(cb.get("user"), dict):
-        return cb["user"].get("user_id")
+        user_id = user_id or cb["user"].get("user_id")
     msg = update.get("message") or {}
     sender = msg.get("sender") or {}
-    if sender.get("user_id"):
-        return sender["user_id"]
+    user_id = user_id or sender.get("user_id")
     rec = msg.get("recipient") or {}
-    return rec.get("user_id") or update.get("chat_id")
+    chat_id = rec.get("chat_id") or chat_id
+    user_id = user_id or rec.get("user_id")
+    return user_id, chat_id
 
 
 async def handle_update(api: MaxApi, update: dict):
     utype = update.get("update_type")
-    user_id = extract_user_id(update)
+    user_id, chat_id = extract_ids(update)
+    logging.info("MAX update %s user=%s chat=%s", utype, user_id, chat_id)
+    if not user_id and chat_id:
+        user_id = chat_id
     if not user_id:
-        logging.info("skip update without user: %s", utype)
+        logging.info("skip update without user: %s %s", utype, list(update.keys()))
         return
-    if utype == "bot_started":
-        await cmd_start(api, user_id, update.get("payload"))
-        return
-    if utype == "message_callback":
-        cb = update.get("callback") or {}
-        payload = cb.get("payload") or ""
-        await handle_callback(api, user_id, payload, cb.get("callback_id") or "")
-        return
-    if utype == "message_created":
-        msg = update.get("message") or {}
-        sender = msg.get("sender") or {}
-        if sender.get("is_bot"):
+    token = current_chat_id.set(chat_id)
+    try:
+        if utype == "bot_started":
+            await cmd_start(api, user_id, update.get("payload"))
             return
-        body = msg.get("body") or {}
-        text = body.get("text") or msg.get("text") or ""
-        await handle_text(api, user_id, text)
+        if utype == "message_callback":
+            cb = update.get("callback") or {}
+            payload = cb.get("payload") or ""
+            await handle_callback(api, user_id, payload, cb.get("callback_id") or "")
+            return
+        if utype == "message_created":
+            msg = update.get("message") or {}
+            sender = msg.get("sender") or {}
+            if sender.get("is_bot"):
+                return
+            body = msg.get("body") or {}
+            text = body.get("text") or msg.get("text") or ""
+            await handle_text(api, user_id, text)
+            return
+        if utype in {"bot_added", "dialog_unmuted"}:
+            await cmd_start(api, user_id)
+    finally:
+        current_chat_id.reset(token)
 
 
 async def wait_for_token() -> str:
@@ -448,10 +480,13 @@ async def main():
             marker = int(raw) if raw.isdigit() else None
         while True:
             try:
-                params = {"timeout": 30, "limit": 100, "types": "message_created,message_callback,bot_started"}
+                params = {"timeout": 30, "limit": 100}
                 if marker is not None:
                     params["marker"] = marker
                 data = await api.get("/updates", params=params)
+                updates = data.get("updates") or []
+                if updates:
+                    logging.info("MAX получил %s событий", len(updates))
                 marker = data.get("marker", marker)
                 if marker is not None:
                     with open(MARKER_FILE, "w") as f:
