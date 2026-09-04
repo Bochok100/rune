@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 
+from gif_media import ensure_loop_gif
 from ritual_data import (
     AMINO_ACIDS,
     BASE_MAP,
@@ -383,7 +384,17 @@ class MaxApi:
 
         with open(path, "rb") as fh:
             content = fh.read()
-        mime = "video/mp4" if path.lower().endswith(".mp4") else "application/octet-stream"
+        lower = path.lower()
+        if lower.endswith(".mp4"):
+            mime = "video/mp4"
+        elif lower.endswith(".gif"):
+            mime = "image/gif"
+        elif lower.endswith((".jpg", ".jpeg")):
+            mime = "image/jpeg"
+        elif lower.endswith(".png"):
+            mime = "image/png"
+        else:
+            mime = "application/octet-stream"
         last_error = None
         for label, ssl_ctx in (("public-ca", ssl.create_default_context()), ("insecure", unverified_ssl())):
             try:
@@ -436,37 +447,21 @@ class MaxApi:
         logging.info("MAX загрузил %s как %s", path, media_type)
         return token
 
-    async def video_att(self, path: str) -> dict | None:
-        if not path or not os.path.exists(path):
+    async def gif_att(self, mp4: str) -> dict | None:
+        gif = ensure_loop_gif(mp4)
+        if not gif:
+            logging.error("MAX нет гифки для %s", mp4)
             return None
-        try:
-            token = await asyncio.wait_for(self.upload_file(path, "video"), timeout=45)
-            return {"type": "video", "payload": {"token": token}}
-        except Exception:
-            logging.exception("не удалось загрузить видео %s", path)
-        try:
-            token = await asyncio.wait_for(self.upload_file(path, "file"), timeout=45)
-            return {"type": "file", "payload": {"token": token}}
-        except Exception:
-            logging.exception("не удалось загрузить файл %s", path)
-            return None
-
-    async def send_gif(self, user_id: int, path: str):
         for attempt in range(2):
-            gif = await self.video_att(path)
-            if not gif:
-                logging.error("MAX нет вложения для %s", path)
-                return
             try:
-                await asyncio.sleep(1 if attempt else 0)
-                await self.send(user_id, "🎬", media=[gif])
-                return
+                token = await asyncio.wait_for(self.upload_file(gif, "image"), timeout=45)
+                return {"type": "image", "payload": {"token": token}}
             except Exception:
-                logging.exception("MAX не отправил гифку %s попытка %s, сброс кэша", path, attempt + 1)
+                logging.exception("не удалось загрузить гиф %s попытка %s", gif, attempt + 1)
                 cached = load_media_cache()
-                for prefix in ("video:", "file:"):
-                    cached.pop(f"{prefix}{os.path.abspath(path)}", None)
+                cached.pop(f"image:{os.path.abspath(gif)}", None)
                 save_media_cache(cached)
+        return None
 
     async def image_att(self, filename: str | None = None, amino: str | None = None, index: int = 0) -> dict | None:
         local = None
@@ -579,8 +574,8 @@ async def cmd_start(api: MaxApi, user_id: int, payload: str | None = None):
                 pass
     text = get_greeting_text(data, datetime.now())
     text += "Нажмите кнопку ниже или напишите «обряд»."
-    await api.send(user_id, text, menu_kb())
-    await api.send_gif(user_id, GIF_START)
+    gif = await api.gif_att(GIF_START)
+    await api.send(user_id, text, menu_kb(), media=[gif] if gif else None)
 
 
 async def start_ritual(api: MaxApi, user_id: int):
@@ -606,12 +601,13 @@ async def start_ritual(api: MaxApi, user_id: int):
     data["last_active"] = now.isoformat()
     save_db(db)
     fsm_set(user_id, {"step": "blue", "complex": 1, "runes": [], "aminos": [], "images": []})
+    gif = await api.gif_att(GIF_RITUAL)
     await api.send(
         user_id,
         "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **синюю** грань. Сколько точек?",
         kb(throw_row("🔵")),
+        media=[gif] if gif else None,
     )
-    await api.send_gif(user_id, GIF_RITUAL)
 
 
 async def on_throw(api: MaxApi, user_id: int, value: str):
@@ -944,8 +940,8 @@ async def main():
             if env("MAX_BOT_USERNAME"):
                 BOT_META["username"] = env("MAX_BOT_USERNAME").lstrip("@")
             for gif_path in (GIF_START, GIF_RITUAL):
-                att = await api.video_att(gif_path)
-                logging.info("MAX видео %s: %s", gif_path, "готово" if att else "нет")
+                att = await api.gif_att(gif_path)
+                logging.info("MAX гиф %s: %s", gif_path, "готово" if att else "нет")
             try:
                 await api.patch("/me/commands", json_body={
                     "commands": [

@@ -66,6 +66,7 @@ storage = RedisStorage(redis=redis)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
+from gif_media import ensure_loop_gif
 from ritual_data import (
     AMINO_ACIDS,
     BASE_MAP,
@@ -147,25 +148,26 @@ async def cached_bot_username() -> str:
         _bot_username = me.username
     return _bot_username
 
+def animation_file(mp4: str) -> str | None:
+    gif = ensure_loop_gif(mp4)
+    if gif:
+        return gif
+    return mp4 if mp4 and os.path.exists(mp4) else None
+
 async def send_cached_animation(message: Message, path: str, **kwargs):
+    send_path = animation_file(path) or path
     try:
-        msg = await send_html(message.answer_animation, animation=media_ref(path), **kwargs)
+        msg = await send_html(message.answer_animation, animation=media_ref(send_path), **kwargs)
     except TelegramBadRequest:
-        logging.warning("Telegram не принял кэш анимации %s, шлём файл заново", path)
+        logging.warning("Telegram не принял кэш анимации %s, шлём файл заново", send_path)
         ids = load_file_ids()
-        ids.pop(path, None)
+        ids.pop(send_path, None)
         with open(FILE_IDS_PATH, "w") as f:
             json.dump(ids, f)
-        try:
-            msg = await send_html(message.answer_animation, animation=FSInputFile(path), **kwargs)
-        except TelegramBadRequest:
-            logging.warning("Telegram animation не прошёл, пробуем video %s", path)
-            msg = await send_html(message.answer_video, video=FSInputFile(path), **kwargs)
-    fid = (msg.animation.file_id if getattr(msg, "animation", None) else None) or (
-        msg.video.file_id if getattr(msg, "video", None) else None
-    )
+        msg = await send_html(message.answer_animation, animation=FSInputFile(send_path), **kwargs)
+    fid = msg.animation.file_id if getattr(msg, "animation", None) else None
     if fid:
-        remember_file_id(path, fid)
+        remember_file_id(send_path, fid)
     return msg
 
 async def send_cached_photo(chat_id: int, path: str, **kwargs):
@@ -610,7 +612,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     await state.clear()
     caption = get_greeting_text(db[user_id], now)
     
-    if os.path.exists("gif1_v2.mp4"):
+    if animation_file("gif1_v2.mp4"):
         await send_cached_animation(message, "gif1_v2.mp4", caption=caption, reply_markup=get_main_menu_kb())
     else:
         await send_html(message.answer, text=caption, reply_markup=get_main_menu_kb())
@@ -658,7 +660,7 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
     await state.update_data(complex_num=1, final_runes=[], final_aminos=[], final_images=[])
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
-    if os.path.exists("gif2_v2.mp4"):
+    if animation_file("gif2_v2.mp4"):
         await send_cached_animation(message, "gif2_v2.mp4", caption=caption, reply_markup=kb)
     else:
         await send_html(message.answer, text=caption, reply_markup=kb)
