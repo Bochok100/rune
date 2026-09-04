@@ -1,4 +1,12 @@
 .env
+venv/
+file_ids.json
+max_fsm.json
+max_media.json
+max_marker.txt
+certs/*.cer
+certs/*.pem
+certs/*.crt
 __pycache__/
 *.pyc
 users_db.json

@@ -1,0 +1,16 @@
+[Unit]
+Description=Rune bot for MAX messenger
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/rune
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/rune/venv/bin/python /opt/rune/maxrunes.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -2,6 +2,8 @@ import asyncio
 import logging
 import json
 import os
+import re
+import html as html_module
 import urllib.parse
 from datetime import datetime, timedelta
 
@@ -14,66 +16,143 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
     FSInputFile, InputMediaPhoto, LabeledPrice, PreCheckoutQuery,
-    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BotCommand
 )
 from aiogram.types.web_app_info import WebAppInfo
 from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.exceptions import TelegramBadRequest, TelegramConflictError, TelegramUnauthorizedError
 from redis.asyncio import Redis
 
 # --- УМНАЯ ЗАГРУЗКА ТОКЕНОВ ИЗ СЕЙФА ---
 # Новые переменные: добавьте их в файл .env рядом с botrunes.py, затем прочитайте через env().
-load_dotenv(os.path.join(BASE_DIR, ".env"))
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 def env(name: str, default: str = "") -> str:
     value = os.getenv(name, default)
     return value.strip().replace('"', "").replace("'", "") if value else default
 
+def env_int(name: str, default: int) -> int:
+    raw = env(name, str(default))
+    if raw.isdigit():
+        return int(raw)
+    return default
+
 raw_token = env("BOT_TOKEN")
-if not raw_token:
-    raise ValueError("❌ КРИТИЧЕСКАЯ ОШИБКА: Бот не видит токен! Проверьте файл .env")
+if not raw_token or "замените" in raw_token:
+    raise ValueError("❌ КРИТИЧЕСКАЯ ОШИБКА: Бот не видит токен! Проверьте BOT_TOKEN в файле .env")
 BOT_TOKEN = raw_token
 
 PAYMENT_TOKEN = env("PAYMENT_TOKEN")
-REDIS_HOST = env("REDIS_HOST", "localhost")
-REDIS_PORT = int(env("REDIS_PORT", "6379") or "6379")
+admin_raw = env("ADMIN_ID")
+if admin_raw.startswith(("live_", "test_")):
+    if not PAYMENT_TOKEN or "замените" in PAYMENT_TOKEN:
+        PAYMENT_TOKEN = admin_raw
+    admin_raw = ""
+if PAYMENT_TOKEN.startswith("замените"):
+    PAYMENT_TOKEN = ""
 
-DB_FILE = "users_db.json"
-MY_ID = int(env("ADMIN_ID", "297967650") or "297967650")
+REDIS_HOST = env("REDIS_HOST", "localhost") or "localhost"
+REDIS_PORT = env_int("REDIS_PORT", 6379)
+
+MY_ID = env_int("ADMIN_ID", 297967650)
+if admin_raw.isdigit():
+    MY_ID = int(admin_raw)
 
 redis = Redis(host=REDIS_HOST, port=REDIS_PORT)
 storage = RedisStorage(redis=redis)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
-BASE_MAP = {"1": "А", "2": "Ц", "3": "У", "4": "Г"}
-AMINO_ACIDS = {
-    "Аргинин": {"codons": ["ЦГЦ", "ЦГУ", "ЦГА", "ЦГГ", "АГА", "АГГ"], "runes": ["Ч", "Y"]},
-    "Аланин": {"codons": ["ГЦУ", "ГЦГ", "ГЦЦ", "ГЦА"], "runes": [")", "¥", "𐰉", "𐰈"]},
-    "Аспарагин": {"codons": ["ААУ", "ААЦ"], "runes": ["ʎ"]},
-    "Аспарагиновая к-та": {"codons": ["ГАУ", "ГАЦ"], "runes": ["*", "1"]},
-    "Валин": {"codons": ["ГУУ", "ГУЦ", "ГУА", "ГУГ"], "runes": ["𐰓", "9", "ς"]},
-    "Глютамин": {"codons": ["ЦАА", "ЦАГ"], "runes": ["Λ", "П"]},
-    "Глютаминовая к-та": {"codons": ["ГАА", "ГАГ"], "runes": ["Y"]},
-    "Гистидин": {"codons": ["ЦАУ", "ЦАЦ"], "runes": ["𐰓"]},
-    "Глицин": {"codons": ["ГГУ", "ГГА", "ГГЦ", "ГГГ"], "runes": ["☺"]}, 
-    "Стоп-кодон": {"codons": ["УАА"], "runes": ["33"]},
-    "Изолейцин": {"codons": ["АУУ", "АУЦ", "АУА"], "runes": ["I|", "Є"]},
-    "Лейцин": {"codons": ["УУА", "УУГ", "ЦУУ", "ЦУЦ", "ЦУА", "ЦУГ"], "runes": ["Y", "J"]},
-    "Лизин": {"codons": ["ААА", "ААГ"], "runes": ["↑"]},
-    "Пирролизин": {"codons": ["УАГ"], "runes": ["ᛟ"]},
-    "Метионин": {"codons": ["АУГ"], "runes": ["Г"]},
-    "Пролин": {"codons": ["ЦЦУ", "ЦЦГ", "ЦЦЦ", "ЦЦА"], "runes": ["ᛉ"]},
-    "Серин": {"codons": ["УЦУ", "УЦГ", "УЦЦ", "УЦА", "АГУ", "АГЦ"], "runes": ["D", "☺"]},
-    "Триптофан": {"codons": ["УГГ"], "runes": ["⌂"]},
-    "Тирозин": {"codons": ["УАУ", "УАЦ"], "runes": ["ᛒ", "ᛃ"]},
-    "Треонин": {"codons": ["АЦУ", "АЦГ", "АЦЦ", "АЦА"], "runes": ["ㅋ", "N", "◁", "F"]},
-    "Фенилаланин": {"codons": ["УУУ", "УУЦ"], "runes": ["X", "|"]},
-    "Цистеин": {"codons": ["УГУ", "УГЦ"], "runes": ["︽", "h"]},
-    "Селеноцистеин": {"codons": ["УГА"], "runes": ["M"]}
-}
+from ritual_data import (
+    AMINO_ACIDS,
+    BASE_MAP,
+    RUNE_IMAGES,
+    days_left_from,
+    ensure_user_record,
+    find_rune_image,
+    format_access_status,
+    get_greeting_text,
+    load_db,
+    restore_user_access,
+    save_db,
+)
+
+FILE_IDS_PATH = "file_ids.json"
+_file_ids_cache = None
+_bot_username = None
+
+def md_to_html(text: str) -> str:
+    if not text:
+        return text
+    converted = html_module.escape(text, quote=False)
+    converted = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", converted)
+    converted = re.sub(r"`([^`]+)`", r"<code>\1</code>", converted)
+    converted = re.sub(r"(?<![a-zA-Z0-9])_([^_]+?)_(?![a-zA-Z0-9])", r"<i>\1</i>", converted)
+    return converted
+
+async def send_html(method, *args, **kwargs):
+    original_text = kwargs.get("text")
+    original_caption = kwargs.get("caption")
+    if original_text:
+        kwargs["text"] = md_to_html(original_text)
+    if original_caption:
+        kwargs["caption"] = md_to_html(original_caption)
+    kwargs["parse_mode"] = "HTML"
+    try:
+        return await method(*args, **kwargs)
+    except TelegramBadRequest as e:
+        if "parse" not in str(e).lower() and "entities" not in str(e).lower():
+            raise
+        if original_text is not None:
+            kwargs["text"] = original_text
+        if original_caption is not None:
+            kwargs["caption"] = original_caption
+        kwargs.pop("parse_mode", None)
+        return await method(*args, **kwargs)
+
+def load_file_ids() -> dict:
+    global _file_ids_cache
+    if _file_ids_cache is None:
+        if os.path.exists(FILE_IDS_PATH):
+            with open(FILE_IDS_PATH, "r") as f:
+                _file_ids_cache = json.load(f)
+        else:
+            _file_ids_cache = {}
+    return _file_ids_cache
+
+def remember_file_id(path: str, file_id: str):
+    ids = load_file_ids()
+    if ids.get(path) != file_id:
+        ids[path] = file_id
+        with open(FILE_IDS_PATH, "w") as f:
+            json.dump(ids, f)
+
+def media_ref(path: str):
+    file_id = load_file_ids().get(path)
+    return file_id if file_id else FSInputFile(path)
+
+async def cached_bot_username() -> str:
+    global _bot_username
+    if not _bot_username:
+        me = await bot.get_me()
+        _bot_username = me.username
+    return _bot_username
+
+async def send_cached_animation(message: Message, path: str, **kwargs):
+    msg = await send_html(message.answer_animation, animation=media_ref(path), **kwargs)
+    fid = (msg.animation.file_id if msg.animation else None) or (msg.video.file_id if msg.video else None)
+    if fid:
+        remember_file_id(path, fid)
+    return msg
+
+async def send_cached_photo(chat_id: int, path: str, **kwargs):
+    msg = await send_html(bot.send_photo, chat_id=chat_id, photo=media_ref(path), **kwargs)
+    if msg.photo:
+        remember_file_id(path, msg.photo[-1].file_id)
+    return msg
 
 class Ritual(StatesGroup):
     waiting_for_blue = State()
@@ -82,70 +161,6 @@ class Ritual(StatesGroup):
     waiting_for_rune_choice = State()
     waiting_for_carousel = State()
     waiting_for_payment = State()
-
-def load_db():
-    if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r") as f: return json.load(f)
-    return {}
-
-def save_db(data):
-    with open(DB_FILE, "w") as f: json.dump(data, f)
-
-def empty_user_record(now: datetime) -> dict:
-    return {
-        "trial_end": now.isoformat(),
-        "next_ritual_time": now.isoformat(),
-        "notified": 0,
-        "paid": False,
-        "referrer": None,
-        "referrals_count": 0,
-        "ritual_step": 0,
-        "last_active": now.isoformat(),
-        "notified_incomplete": False,
-        "notified_12h": False,
-        "notified_inactive": False,
-        "special_day_notified": ""
-    }
-
-def ensure_user_record(db: dict, user_id: str, now: datetime | None = None) -> dict:
-    now = now or datetime.now()
-    data = db.get(user_id)
-    if not isinstance(data, dict):
-        data = empty_user_record(now)
-        db[user_id] = data
-    return data
-
-def days_left_from(trial_end: datetime, now: datetime) -> int:
-    time_left = trial_end - now
-    if time_left.total_seconds() <= 0:
-        return 0
-    return int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0)
-
-def restore_user_access(db: dict, user_id: str, days: int, now: datetime | None = None) -> dict:
-    now = now or datetime.now()
-    data = ensure_user_record(db, user_id, now)
-    current_end = datetime.fromisoformat(data.get("trial_end", now.isoformat()))
-    start_date = current_end if current_end > now else now
-    data["trial_end"] = (start_date + timedelta(days=days)).isoformat()
-    data["notified"] = 0
-    data["paid"] = True
-    return data
-
-def format_access_status(user_id: str, data: dict, now: datetime | None = None) -> str:
-    now = now or datetime.now()
-    trial_end = datetime.fromisoformat(data.get("trial_end", now.isoformat()))
-    next_ritual = datetime.fromisoformat(data.get("next_ritual_time", now.isoformat()))
-    left = days_left_from(trial_end, now)
-    active = now < trial_end
-    ritual_ready = now >= next_ritual
-    return (
-        f"👤 ID: `{user_id}`\n"
-        f"{'✅ Доступ активен' if active else '🔒 Доступ неактивен'}\n"
-        f"📅 До: `{trial_end.strftime('%Y-%m-%d %H:%M')}`\n"
-        f"⏳ Осталось дней: **{left}**\n"
-        f"🔮 Обряд: {'можно провести' if ritual_ready else 'ожидание таймера'}\n"
-        f"💳 paid: `{data.get('paid', False)}`"
-    )
 
 def get_main_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -168,57 +183,8 @@ def get_bottom_kb():
             ]
         ],
         resize_keyboard=True,
-        is_persistent=True 
+        is_persistent=True
     )
-
-def get_greeting_text(user_data, now):
-    trial_end = datetime.fromisoformat(user_data.get("trial_end", now.isoformat()))
-    time_left = trial_end - now
-    days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
-    greeting = "Приветствую. Это Ваш цифровой помощник в достижении гармонии. Используем мудрость салгын кут и силу рунических символов, чтобы помочь вам восполнить утраченный ресурс.\n\n"
-    if now < trial_end:
-        greeting += f"🎁 **У вас активно {days_left} дня доступа!**\n\n"
-    else:
-        greeting += "⚠️ **Ваша подписка неактивна.**\nПройдите обряд, чтобы выбрать тариф и получить доступ к результатам.\n\n"
-    return greeting
-
-RUNE_IMAGES = {
-    "Аргинин":             ["Аргинин2.jpg",             "Аргинин.jpg"],               
-    "Аланин":              ["Аланин4.jpg",              "Аланин3.jpg",              "Аланин2.jpg",   "Аланин.jpg"], 
-    "Аспарагин":           ["Аспарагин.jpg"],
-    "Аспарагиновая к-та":  ["Аспарагиновая к-та.jpg", "Аспарагиновая к-та2.jpg"],
-    "Валин":               ["Валин2.jpg",               "Валин3.jpg",               "Валин.jpg"], 
-    "Глютамин":            ["Глютамин.jpg",            "Глютамин2.jpg"],
-    "Глютаминовая к-та":   ["Глютаминовая к-та.jpg"],
-    "Гистидин":            ["Гистидин.jpg"],
-    "Глицин":              ["Глицин.jpg"],                                           
-    "Стоп-кодон":          ["Стоповой кодон.jpg"],
-    "Изолейцин":           ["Изолейцин2.jpg",           "Изолейцин.jpg"],             
-    "Лейцин":              ["Лейцин.jpg",              "Лейцин2.jpg"],
-    "Лизин":               ["Лизин.jpg"],
-    "Пирролизин":          ["Пирролизин.jpg"],
-    "Метионин":            ["Метионин.jpg"],
-    "Пролин":              ["Пролин.jpg"],
-    "Серин":               ["Серин.jpg",               "Серин2.jpg"],
-    "Триптофан":           ["Триптофан.jpg"],
-    "Тирозин":             ["Тирозин.jpg",             "Тирозин2.jpg"],
-    "Треонин":             ["Треонин.jpg",             "Треонин2.jpg",             "Треонин3.jpg",  "Треонин4.jpg"],
-    "Фенилаланин":         ["Фенилаланин.jpg",         "Фенилаланин 2.jpg"],
-    "Цистеин":             ["Цистеин.jpg",             "Цистеин.jpg"],               
-    "Селеноцистеин":       ["Селеноцистеин.jpg"],
-}
-
-def find_rune_image(amino: str, index: int) -> str | None:
-    files = RUNE_IMAGES.get(amino, [])
-    if not files:
-        return None
-    if index >= len(files) or files[index] is None:
-        img_name = files[0]
-    else:
-        img_name = files[index]
-        
-    path = os.path.join("images", "runes", img_name)
-    return path if os.path.exists(path) else None
 
 def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
     nav_row = []
@@ -237,10 +203,6 @@ def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"✅ Выбрать эту руну", callback_data=f"rune_{current}")]
     ])
 
-@dp.message(Command("myid"))
-async def cmd_myid(message: Message):
-    await message.answer(f"Ваш Telegram ID: `{message.from_user.id}`", parse_mode="Markdown")
-
 @dp.message(Command("whois"))
 async def cmd_whois(message: Message, command: CommandObject):
     if message.from_user.id != MY_ID:
@@ -248,14 +210,14 @@ async def cmd_whois(message: Message, command: CommandObject):
     args = (command.args or "").split()
     target_id = args[0] if args else str(message.from_user.id)
     if not target_id.isdigit():
-        await message.answer("Использование: `/whois <telegram_id>`", parse_mode="Markdown")
+        await send_html(message.answer, text="Использование: `/whois <telegram_id>`")
         return
     db = load_db()
     data = db.get(target_id)
     if not isinstance(data, dict):
-        await message.answer(f"Пользователь `{target_id}` не найден в базе.", parse_mode="Markdown")
+        await send_html(message.answer, text=f"Пользователь `{target_id}` не найден в базе.")
         return
-    await message.answer(format_access_status(target_id, data), parse_mode="Markdown")
+    await send_html(message.answer, text=format_access_status(target_id, data))
 
 @dp.message(Command("grant"))
 async def cmd_grant(message: Message, command: CommandObject):
@@ -267,12 +229,14 @@ async def cmd_grant(message: Message, command: CommandObject):
     elif len(args) == 2:
         target_id, days_raw = args[0], args[1]
     else:
-        await message.answer(
+        await send_html(
+            message.answer,
+            text=(
             "Восстановление доступа:\n"
             "`/grant <telegram_id> <дни>`\n"
             "`/grant <дни>` — продлить себе\n\n"
-            "Примеры:\n`/grant 123456789 30`\n`/grant 7`",
-            parse_mode="Markdown"
+            "Примеры:\n`/grant 123456789 30`\n`/grant 7`"
+            ),
         )
         return
     if not target_id.isdigit() or not days_raw.lstrip("-").isdigit():
@@ -287,15 +251,15 @@ async def cmd_grant(message: Message, command: CommandObject):
     data = restore_user_access(db, target_id, days)
     save_db(db)
     status = format_access_status(target_id, data)
-    await message.answer(f"🔓 **Доступ восстановлен на {days} дн.**\n\n{status}", parse_mode="Markdown")
+    await send_html(message.answer, text=f"🔓 **Доступ восстановлен на {days} дн.**\n\n{status}")
 
     if int(target_id) != message.from_user.id:
         try:
             left = days_left_from(datetime.fromisoformat(data["trial_end"]), datetime.now())
-            await bot.send_message(
+            await send_html(
+                bot.send_message,
                 chat_id=int(target_id),
                 text=f"🔓 **Ваш доступ восстановлен.**\n\nАктивен ещё **{left}** дн. Напишите /start, чтобы продолжить.",
-                parse_mode="Markdown"
             )
         except Exception:
             await message.answer("⚠️ Пользователю не удалось отправить уведомление (возможно, он не запускал бота).")
@@ -307,7 +271,7 @@ async def cmd_allow_ritual(message: Message, command: CommandObject):
     args = (command.args or "").split()
     target_id = args[0] if args else str(message.from_user.id)
     if not target_id.isdigit():
-        await message.answer("Использование: `/allow_ritual <telegram_id>`", parse_mode="Markdown")
+        await send_html(message.answer, text="Использование: `/allow_ritual <telegram_id>`")
         return
     db = load_db()
     now = datetime.now()
@@ -317,7 +281,7 @@ async def cmd_allow_ritual(message: Message, command: CommandObject):
     data["notified_12h"] = False
     data["notified_incomplete"] = False
     save_db(db)
-    await message.answer(f"🔮 Таймер обряда сброшен для `{target_id}`.", parse_mode="Markdown")
+    await send_html(message.answer, text=f"🔮 Таймер обряда сброшен для `{target_id}`.")
 
 @dp.message(Command("check_images"))
 async def cmd_check_images(message: Message):
@@ -335,7 +299,7 @@ async def cmd_check_images(message: Message):
     report += f"✅ Найдено файлов: {found}\n❌ Отсутствует: {len(missing)}\n\n"
     if missing: report += "⚠️ **Не найдены файлы:**\n" + "\n".join(missing)
     else: report += "🎉 **Все картинки на месте!**"
-    await message.answer(report, parse_mode="Markdown")
+    await send_html(message.answer, text=report)
 
 @dp.message(Command("show_images"))
 async def cmd_show_images(message: Message):
@@ -349,7 +313,7 @@ async def cmd_show_images(message: Message):
             if os.path.exists(path):
                 caption = f"🧪 Аминокислота: **{amino}**\n📁 Файл: `{img}`\n🔮 На фото должна быть руна: **{rune_symbol}**"
                 try:
-                    await bot.send_photo(chat_id=message.chat.id, photo=FSInputFile(path), caption=caption, parse_mode="Markdown")
+                    await send_cached_photo(message.chat.id, path, caption=caption)
                     await asyncio.sleep(0.5)
                 except Exception: pass
     await message.answer("✅ Выгрузка завершена!")
@@ -368,87 +332,99 @@ async def daily_notifier():
     }
 
     while True:
-        db = load_db()
-        now = datetime.now()
-        today_str = now.strftime("%m-%d")
-        changed = False
-        
-        for user_id, data in db.items():
-            if isinstance(data, str): continue
-            
-            # --- Инициализация переменных для старых пользователей ---
-            if 'notified_12h' not in data: data['notified_12h'] = False
-            if 'ritual_step' not in data: data['ritual_step'] = 0
-            if 'last_active' not in data: data['last_active'] = now.isoformat()
-            if 'notified_incomplete' not in data: data['notified_incomplete'] = False
-            if 'notified_inactive' not in data: data['notified_inactive'] = False
-            if 'special_day_notified' not in data: data['special_day_notified'] = ""
-            
-            trial_end = datetime.fromisoformat(data['trial_end'])
-            next_ritual = datetime.fromisoformat(data['next_ritual_time'])
-            last_active = datetime.fromisoformat(data['last_active'])
-            
-            time_to_end = trial_end - now
-            days_left = int(time_to_end.total_seconds() / 86400) + (1 if time_to_end.total_seconds() % 86400 > 0 else 0)
-            sub_notified = data.get('notified', 0)
-            
-            try:
-                # 1. ОСНОВНОЕ НАПОМИНАНИЕ (ЧЕРЕЗ 12 ЧАСОВ)
-                if now >= next_ritual and not data['notified_12h']:
-                    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]])
-                    await bot.send_message(
-                        chat_id=int(user_id), 
-                        text="🌬️ Сегодня доступен новый расклад.\n\nПодготовьте палочки и выполните практику.",
-                        reply_markup=kb
-                    )
-                    data['notified_12h'] = True
-                    data['notified_inactive'] = False # Обнуляем счетчик застоя
-                    changed = True
+        try:
+            db = load_db()
+            now = datetime.now()
+            today_str = now.strftime("%m-%d")
+            changed = False
 
-                # 2. НАПОМИНАНИЕ О НЕЗАВЕРШЕННОМ РАСКЛАДЕ (ЕСЛИ ПРОШЕЛ 1 ЧАС)
-                if data['ritual_step'] > 0 and (now - last_active).total_seconds() > 3600 and not data['notified_incomplete']:
-                    step = data['ritual_step'] - 1 # 1-й шаг это 0 бросков, 2-й шаг это 1 бросок и тд.
-                    await bot.send_message(
-                        chat_id=int(user_id), 
-                        text=f"Вы выполнили только {step} из 3 бросков.\n\nЗавершите сегодняшний расклад."
-                    )
-                    data['notified_incomplete'] = True
-                    changed = True
+            for user_id, data in db.items():
+                if not str(user_id).isdigit() or not isinstance(data, dict):
+                    continue
 
-                # 3. НАПОМИНАНИЯ О ПОДПИСКЕ (За 3 дня и за 1 день)
-                if days_left == 3 and sub_notified < 1:
-                    await bot.send_message(int(user_id), "⚠️ Ваша подписка заканчивается через 3 дня.")
-                    data['notified'] = 1
-                    changed = True
-                elif days_left == 1 and sub_notified < 2:
-                    await bot.send_message(int(user_id), "⏳ Остался 1 день доступа.")
-                    data['notified'] = 2
-                    changed = True
-                elif days_left <= 0 and sub_notified < 3:
-                    await bot.send_message(int(user_id), "🔒 Ваша подписка завершена.\nВы можете продлить доступ, пройдя новый обряд.")
-                    data['notified'] = 3
-                    changed = True
+                try:
+                    if "trial_end" not in data:
+                        data["trial_end"] = now.isoformat()
+                        changed = True
+                    if "next_ritual_time" not in data:
+                        data["next_ritual_time"] = now.isoformat()
+                        changed = True
+                    if "notified_12h" not in data:
+                        data["notified_12h"] = False
+                    if "ritual_step" not in data:
+                        data["ritual_step"] = 0
+                    if "last_active" not in data:
+                        data["last_active"] = now.isoformat()
+                    if "notified_incomplete" not in data:
+                        data["notified_incomplete"] = False
+                    if "notified_inactive" not in data:
+                        data["notified_inactive"] = False
+                    if "special_day_notified" not in data:
+                        data["special_day_notified"] = ""
 
-                # 4. ВОЗВРАТ ПОЛЬЗОВАТЕЛЯ (ЕСЛИ ПРОШЛО 7 ДНЕЙ)
-                if now >= next_ritual + timedelta(days=7) and not data['notified_inactive']:
-                    await bot.send_message(
-                        int(user_id), 
-                        "Вы давно не выполняли расклад.\n\nВозможно, сегодня подходящий день вернуться к практике."
-                    )
-                    data['notified_inactive'] = True
-                    changed = True
+                    trial_end = datetime.fromisoformat(data["trial_end"])
+                    next_ritual = datetime.fromisoformat(data["next_ritual_time"])
+                    last_active = datetime.fromisoformat(data["last_active"])
 
-                # 5. ОСОБЫЕ ДНИ (ПРАЗДНИКИ/СОЛНЦЕСТОЯНИЯ)
-                if today_str in SPECIAL_DAYS and data['special_day_notified'] != today_str:
-                    await bot.send_message(int(user_id), SPECIAL_DAYS[today_str])
-                    data['special_day_notified'] = today_str
-                    changed = True
+                    time_to_end = trial_end - now
+                    days_left = int(time_to_end.total_seconds() / 86400) + (1 if time_to_end.total_seconds() % 86400 > 0 else 0)
+                    sub_notified = data.get("notified", 0)
 
-            except Exception as e:
-                logging.error(f"Ошибка отправки уведомления пользователю {user_id}: {e}")
-                
-        if changed: save_db(db)
-        await asyncio.sleep(3600) # Бот проверяет всех пользователей 1 раз в час
+                    if now >= next_ritual and not data["notified_12h"]:
+                        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]])
+                        await bot.send_message(
+                            chat_id=int(user_id),
+                            text="🌬️ Сегодня доступен новый расклад.\n\nПодготовьте палочки и выполните практику.",
+                            reply_markup=kb
+                        )
+                        data["notified_12h"] = True
+                        data["notified_inactive"] = False
+                        changed = True
+
+                    if data["ritual_step"] > 0 and (now - last_active).total_seconds() > 3600 and not data["notified_incomplete"]:
+                        step = data["ritual_step"] - 1
+                        await bot.send_message(
+                            chat_id=int(user_id),
+                            text=f"Вы выполнили только {step} из 3 бросков.\n\nЗавершите сегодняшний расклад."
+                        )
+                        data["notified_incomplete"] = True
+                        changed = True
+
+                    if days_left == 3 and sub_notified < 1:
+                        await bot.send_message(int(user_id), "⚠️ Ваша подписка заканчивается через 3 дня.")
+                        data["notified"] = 1
+                        changed = True
+                    elif days_left == 1 and sub_notified < 2:
+                        await bot.send_message(int(user_id), "⏳ Остался 1 день доступа.")
+                        data["notified"] = 2
+                        changed = True
+                    elif days_left <= 0 and sub_notified < 3:
+                        await bot.send_message(int(user_id), "🔒 Ваша подписка завершена.\nВы можете продлить доступ, пройдя новый обряд.")
+                        data["notified"] = 3
+                        changed = True
+
+                    if now >= next_ritual + timedelta(days=7) and not data["notified_inactive"]:
+                        await bot.send_message(
+                            int(user_id),
+                            "Вы давно не выполняли расклад.\n\nВозможно, сегодня подходящий день вернуться к практике."
+                        )
+                        data["notified_inactive"] = True
+                        changed = True
+
+                    if today_str in SPECIAL_DAYS and data["special_day_notified"] != today_str:
+                        await bot.send_message(int(user_id), SPECIAL_DAYS[today_str])
+                        data["special_day_notified"] = today_str
+                        changed = True
+
+                except Exception as e:
+                    logging.error("Ошибка уведомления пользователю %s: %s", user_id, e)
+
+            if changed:
+                save_db(db)
+        except Exception:
+            logging.exception("Сбой цикла напоминаний")
+
+        await asyncio.sleep(3600)
 
 @dp.message(F.web_app_data)
 async def web_app_data_handler(message: Message, state: FSMContext):
@@ -465,7 +441,7 @@ async def web_app_data_handler(message: Message, state: FSMContext):
                 f"💵 **Сумма к оплате:** {data['price']} руб.\n\n"
                 f"💬 *Клиенту выставлен счет. Ждем поступления средств...*"
             )
-            await bot.send_message(chat_id=MY_ID, text=admin_pending_text, parse_mode="Markdown")
+            await send_html(bot.send_message, chat_id=MY_ID, text=admin_pending_text)
             price_rub = data.get("price", 400)
             prices = [LabeledPrice(label=f"Набор палочек ({data['delivery']})", amount=price_rub * 100)]
             await bot.send_invoice(
@@ -491,8 +467,8 @@ async def reset_timer(message: Message, state: FSMContext):
 
 @dp.message(F.text == "🤝 Пригласить друга")
 async def referral_menu(message: Message):
-    bot_info = await bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start=ref_{message.from_user.id}"
+    username = await cached_bot_username()
+    ref_link = f"https://t.me/{username}?start=ref_{message.from_user.id}"
     
     db = load_db()
     user_id = str(message.from_user.id)
@@ -508,7 +484,7 @@ async def referral_menu(message: Message):
         f"`{ref_link}`\n\n"
         "_(Нажмите на ссылку, чтобы скопировать и отправьте её друзьям)_"
     )
-    await message.answer(text, parse_mode="Markdown")
+    await send_html(message.answer, text=text)
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
@@ -534,10 +510,10 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
                 db[referrer_id]["notified"] = 0 
                 
                 try:
-                    await bot.send_message(
+                    await send_html(
+                        bot.send_message,
                         chat_id=int(referrer_id),
                         text="🎉 **По вашей ссылке присоединился новый участник!**\nВам начислено `+3 дня` доступа к боту 🎁",
-                        parse_mode="Markdown"
                     )
                 except Exception:
                     pass
@@ -562,9 +538,9 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     caption = get_greeting_text(db[user_id], now)
     
     if os.path.exists("gif1_v2.mp4"):
-        await message.answer_animation(animation=FSInputFile("gif1_v2.mp4"), caption=caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
+        await send_cached_animation(message, "gif1_v2.mp4", caption=caption, reply_markup=get_main_menu_kb())
     else:
-        await message.answer(caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
+        await send_html(message.answer, text=caption, reply_markup=get_main_menu_kb())
     await message.answer("👇 Для начала работы используйте меню ниже:", reply_markup=get_bottom_kb())
 
 @dp.message(F.text == "🔮 Начать обряд")
@@ -587,8 +563,8 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
         hours, remainder = divmod(time_left.seconds, 3600)
         minutes, _ = divmod(remainder, 60)
         
-        bot_info = await bot.get_me()
-        ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+        username = await cached_bot_username()
+        ref_link = f"https://t.me/{username}?start=ref_{user_id}"
         
         promo_text = (
             f"⏳ Обряд уже проведен! Следующий будет доступен через {hours} ч. {minutes} мин.\n\n"
@@ -596,7 +572,7 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
             "Пригласите друга по вашей ссылке:\n"
             f"`{ref_link}`"
         )
-        await message.answer(promo_text, parse_mode="Markdown")
+        await send_html(message.answer, text=promo_text)
         return
         
     # ФИКСИРУЕМ СТАРТ ОБРЯДА
@@ -610,9 +586,9 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
     if os.path.exists("gif2_v2.mp4"):
-        await message.answer_animation(animation=FSInputFile("gif2_v2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
+        await send_cached_animation(message, "gif2_v2.mp4", caption=caption, reply_markup=kb)
     else:
-        await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
+        await send_html(message.answer, text=caption, reply_markup=kb)
     await state.set_state(Ritual.waiting_for_blue)
 
 @dp.callback_query(Ritual.waiting_for_blue, F.data.startswith("throw_"))
@@ -622,9 +598,9 @@ async def proc_blue(callback: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🟢 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Теперь посмотри на **ЗЕЛЕНУЮ** грань. Сколько точек?"
     if callback.message.animation or callback.message.video or callback.message.photo:
-        await callback.message.edit_caption(caption=caption, parse_mode="Markdown", reply_markup=kb)
+        await send_html(callback.message.edit_caption, caption=caption, reply_markup=kb)
     else:
-        await callback.message.edit_text(text=caption, parse_mode="Markdown", reply_markup=kb)
+        await send_html(callback.message.edit_text, text=caption, reply_markup=kb)
     await state.set_state(Ritual.waiting_for_green)
 
 @dp.callback_query(Ritual.waiting_for_green, F.data.startswith("throw_"))
@@ -634,9 +610,9 @@ async def proc_green(callback: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔴 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Теперь посмотри на **КРАСНУЮ** грань. Сколько точек?"
     if callback.message.animation or callback.message.video or callback.message.photo:
-        await callback.message.edit_caption(caption=caption, parse_mode="Markdown", reply_markup=kb)
+        await send_html(callback.message.edit_caption, caption=caption, reply_markup=kb)
     else:
-        await callback.message.edit_text(text=caption, parse_mode="Markdown", reply_markup=kb)
+        await send_html(callback.message.edit_text, text=caption, reply_markup=kb)
     await state.set_state(Ritual.waiting_for_red)
 
 @dp.callback_query(Ritual.waiting_for_red, F.data.startswith("throw_"))
@@ -673,34 +649,39 @@ async def show_carousel(chat_id: int, state: FSMContext, amino: str, runes: list
     kb = make_carousel_kb(current, total)
 
     await state.update_data(carousel_index=current)
-    caption = f"🧬 **{amino}**\n🔮 Руна: **{rune_symbol}**\n\n_{current+1} из {total} — листайте ◀ ▶ и выберите нужную_"
+    caption = f"🧬 **{amino}**\n🔮 Руна: **{rune_symbol}**\n\n{current+1} из {total} — листайте ◀ ▶ и выберите нужную"
+    html_caption = md_to_html(caption)
     data = await state.get_data()
     carousel_msg_id = data.get("carousel_msg_id")
     carousel_file_ids = data.get("carousel_file_ids", {})
 
     if img_path:
-        file_id = carousel_file_ids.get(str(current))
+        file_id = carousel_file_ids.get(str(current)) or load_file_ids().get(img_path)
         if carousel_msg_id and file_id:
             try:
-                await bot.edit_message_media(chat_id=chat_id, message_id=carousel_msg_id, media=InputMediaPhoto(media=file_id, caption=caption, parse_mode="Markdown"), reply_markup=kb)
+                await bot.edit_message_media(chat_id=chat_id, message_id=carousel_msg_id, media=InputMediaPhoto(media=file_id, caption=html_caption, parse_mode="HTML"), reply_markup=kb)
                 return
-            except Exception: pass
+            except Exception:
+                pass
         if carousel_msg_id and not file_id:
             try:
                 await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
-            except Exception: pass
-        msg = await bot.send_photo(chat_id=chat_id, photo=FSInputFile(img_path), caption=caption, parse_mode="Markdown", reply_markup=kb)
+            except Exception:
+                pass
+        msg = await send_cached_photo(chat_id, img_path, caption=caption, reply_markup=kb)
         carousel_file_ids[str(current)] = msg.photo[-1].file_id
         await state.update_data(carousel_msg_id=msg.message_id, carousel_file_ids=carousel_file_ids)
     else:
         if carousel_msg_id:
             try:
-                await bot.edit_message_text(chat_id=chat_id, message_id=carousel_msg_id, text=caption, parse_mode="Markdown", reply_markup=kb)
+                await send_html(bot.edit_message_text, chat_id=chat_id, message_id=carousel_msg_id, text=caption, reply_markup=kb)
                 return
             except Exception:
-                try: await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
-                except Exception: pass
-        msg = await bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown", reply_markup=kb)
+                try:
+                    await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
+                except Exception:
+                    pass
+        msg = await send_html(bot.send_message, chat_id=chat_id, text=caption, reply_markup=kb)
         await state.update_data(carousel_msg_id=msg.message_id)
 
 @dp.callback_query(Ritual.waiting_for_carousel, F.data.startswith("carousel_"))
@@ -762,10 +743,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos, final_images=images_list)
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
         caption = f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** СИНЯЯ грань:"
-        if os.path.exists("gif2_v2.mp4"):
-            await message.answer_animation(animation=FSInputFile("gif2_v2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
-        else:
-            await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
+        await send_html(message.answer, text=caption, reply_markup=kb)
         await state.set_state(Ritual.waiting_for_blue)
     else:
         # ОБРЯД ЗАВЕРШЕН — ОБНУЛЯЕМ ШАГ
@@ -789,13 +767,13 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада: **{' | '.join(runes)}**\n\n"
             final_text += f"🎁 У вас идет оплаченный период (осталось дней: {days_left}). Чтобы расшифровать послание Салгын Кут и активировать силу рун, нажмите кнопку **ПОЛУЧИТЬ РЕЗУЛЬТАТЫ** ниже 👇"
             
-            await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
+            await send_html(message.answer, text=final_text, reply_markup=kb_final)
             await state.clear()
         else:
             await state.update_data(final_runes=runes, final_aminos=aminos, final_images=images_list)
             
-            bot_info = await bot.get_me()
-            ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+            username = await cached_bot_username()
+            ref_link = f"https://t.me/{username}?start=ref_{user_id}"
 
             kb_pay = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💳 1 месяц — 990 ₽", callback_data="pay_1")],
@@ -812,7 +790,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
                 f"🔗 Ваша ссылка: `{ref_link}`"
             )
             
-            await message.answer(pay_text, reply_markup=kb_pay, parse_mode="Markdown")
+            await send_html(message.answer, text=pay_text, reply_markup=kb_pay)
             await state.set_state(Ritual.waiting_for_payment)
 
 @dp.callback_query(Ritual.waiting_for_payment, F.data.startswith("pay_"))
@@ -880,7 +858,7 @@ async def successful_payment(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="💎 Вступить в сообщество", url="https://t.me/+SjHfMeVK4GA3N2Ey")]
         ])
         final_text = f"✅ **Оплата прошла успешно! Добро пожаловать.**\n\nВаша подписка продлена на {days_to_add} дней.\nТвоя финальная триада: **{' | '.join(runes)}**\n\n👇 Нажмите на кнопку ниже, чтобы вступить в наше закрытое сообщество!"
-        await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
+        await send_html(message.answer, text=final_text, reply_markup=kb_final)
         await state.clear()
         
     elif payload == "pay_sticks":
@@ -898,16 +876,46 @@ async def successful_payment(message: Message, state: FSMContext):
             f"📍 **Адрес:** {address}\n\n"
             f"💬 *Деньги получены. Свяжитесь с клиентом для отправки заказа!*"
         )
-        await bot.send_message(chat_id=MY_ID, text=admin_text, parse_mode="Markdown")
+        await send_html(bot.send_message, chat_id=MY_ID, text=admin_text)
         await message.answer("🎉 **Поздравляем с приобретением!**\nОплата прошла успешно. Скоро с вами свяжутся, или вы можете написать напрямую: @daayakh")
         await state.update_data(pending_order=None)
 
 async def main():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
     os.makedirs("images/amino", exist_ok=True)
     os.makedirs("images/runes", exist_ok=True)
+
+    try:
+        await redis.ping()
+    except Exception as e:
+        logging.error("Redis недоступен (%s:%s): %s", REDIS_HOST, REDIS_PORT, e)
+        raise
+
+    try:
+        me = await bot.get_me()
+    except TelegramUnauthorizedError:
+        logging.error("Неверный BOT_TOKEN в файле .env — проверьте токен у @BotFather")
+        raise
+
+    logging.info("Бот онлайн: @%s id=%s", me.username, me.id)
+    global _bot_username
+    _bot_username = me.username
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Запуск и меню"),
+    ])
     await bot.delete_webhook(drop_pending_updates=True)
     asyncio.create_task(daily_notifier())
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    except TelegramConflictError:
+        logging.error(
+            "Этот токен уже опрашивает другой процесс. "
+            "Остановите старый бот (другой сервер или Docker) или смените токен."
+        )
+        raise
 
 if __name__ == "__main__":
     asyncio.run(main())

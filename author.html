@@ -30,6 +30,7 @@
     <script>
         window.Telegram.WebApp.ready();
         window.Telegram.WebApp.expand();
+        if (window.WebApp && window.WebApp.ready) { window.WebApp.ready(); if (window.WebApp.expand) window.WebApp.expand(); }
     </script>
 </body>
 </html>
