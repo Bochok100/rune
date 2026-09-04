@@ -264,6 +264,22 @@ def extract_upload_token(data: dict) -> str:
     return ""
 
 
+def is_not_ready(err: Exception) -> bool:
+    text = str(err).lower()
+    return "attachment.not.ready" in text or "not.processed" in text or "not ready" in text
+
+
+def has_open_app(attachments: list) -> bool:
+    for att in attachments or []:
+        if att.get("type") != "inline_keyboard":
+            continue
+        for row in att.get("payload", {}).get("buttons", []):
+            for item in row:
+                if item.get("type") == "open_app":
+                    return True
+    return False
+
+
 def demote_open_app(attachments: list) -> list:
     converted = []
     for att in attachments:
@@ -353,7 +369,7 @@ class MaxApi:
         if not path or not os.path.exists(path):
             return None
         try:
-            token = await self.upload_file(path, "video")
+            token = await asyncio.wait_for(self.upload_file(path, "video"), timeout=20)
             return {"type": "video", "payload": {"token": token}}
         except Exception:
             logging.exception("не удалось загрузить видео %s", path)
@@ -367,64 +383,68 @@ class MaxApi:
             candidate = os.path.join("images", "runes", filename)
             if os.path.exists(candidate):
                 local = candidate
-        if local:
-            try:
-                token = await self.upload_file(local, "image")
-                return {"type": "image", "payload": {"token": token}}
-            except Exception:
-                logging.exception("загрузка картинки %s", local)
         url = rune_page_url(amino, index) if amino else None
         if not url and filename:
             url = f"{PAGES}/images/runes/{urllib.parse.quote(filename)}"
         if url:
             return {"type": "image", "payload": {"url": url}}
+        if local:
+            try:
+                token = await asyncio.wait_for(self.upload_file(local, "image"), timeout=20)
+                return {"type": "image", "payload": {"token": token}}
+            except Exception:
+                logging.exception("загрузка картинки %s", local)
         return None
+
+    async def _try_post(self, dests: list, body: dict):
+        last_error = None
+        not_ready = False
+        for params in dests:
+            try:
+                return await self.post("/messages", params=params, json_body=body), None, False
+            except Exception as e:
+                last_error = e
+                logging.warning("MAX send %s: %s", params, e)
+                if is_not_ready(e):
+                    not_ready = True
+                    break
+        return None, last_error, not_ready
 
     async def send(self, user_id: int, text: str, attachments=None, chat_id=None, media=None):
         chat_id = chat_id or current_chat_id.get()
-        atts = list(attachments or [])
-        if media:
-            atts = list(media) + atts
-        body = {"text": text, "format": "markdown"}
-        if atts:
-            body["attachments"] = atts
-        attempts = []
+        dests = []
         if chat_id:
-            attempts.append({"chat_id": chat_id})
-        attempts.append({"user_id": user_id})
+            dests.append({"chat_id": chat_id})
+        dests.append({"user_id": user_id})
+        media_list = [item for item in (media or []) if item]
+        kb_list = list(attachments or [])
+        variants = []
+        if media_list and kb_list:
+            variants.append(media_list + kb_list)
+        if media_list:
+            variants.append(media_list)
+        if kb_list:
+            variants.append(kb_list)
+        if has_open_app(kb_list):
+            variants.append(demote_open_app(kb_list))
+        variants.append(None)
         last_error = None
-        for delay in (0, 2, 4, 8, 12):
-            if delay:
-                await asyncio.sleep(delay)
-            not_ready = False
-            for params in attempts:
-                try:
-                    return await self.post("/messages", params=params, json_body=body)
-                except Exception as e:
-                    last_error = e
-                    if is_not_ready(e):
-                        not_ready = True
-                        logging.warning("MAX вложение ещё обрабатывается, повтор")
-                        break
-                    logging.warning("MAX send %s failed: %s", params, e)
-            if not_ready:
-                continue
-            break
-        keyboard_only = [a for a in atts if a.get("type") == "inline_keyboard"]
-        fallbacks = []
-        if keyboard_only:
-            fallbacks.append(keyboard_only)
-            fallbacks.append(demote_open_app(keyboard_only))
-        for kb_atts in fallbacks:
-            try:
-                return await self.post(
-                    "/messages",
-                    params=attempts[0],
-                    json_body={"text": text, "format": "markdown", "attachments": kb_atts},
-                )
-            except Exception as e:
-                last_error = e
-                logging.warning("MAX send fallback: %s", e)
+        for atts in variants:
+            body = {"text": text}
+            if atts:
+                body["attachments"] = atts
+            retries = 4 if media_list and atts and any(a.get("type") in {"video", "image"} for a in atts) else 1
+            for attempt in range(retries):
+                if attempt:
+                    await asyncio.sleep(2 * attempt)
+                    logging.warning("MAX повтор отправки вложения, попытка %s", attempt + 1)
+                result, last_error, not_ready = await self._try_post(dests, body)
+                if result is not None:
+                    return result
+                if not_ready:
+                    continue
+                break
+        logging.error("MAX не смог отправить сообщение user=%s: %s", user_id, last_error)
         if last_error:
             raise last_error
 
@@ -461,8 +481,13 @@ async def cmd_start(api: MaxApi, user_id: int, payload: str | None = None):
                 pass
     text = get_greeting_text(data, datetime.now())
     text += "Нажмите кнопку ниже или напишите «обряд»."
+    await api.send(user_id, text, menu_kb())
     gif = await api.video_att(GIF_START)
-    await api.send(user_id, text, menu_kb(), media=[gif] if gif else None)
+    if gif:
+        try:
+            await api.send(user_id, "▶", media=[gif])
+        except Exception:
+            logging.exception("не отправилось приветственное видео")
 
 
 async def start_ritual(api: MaxApi, user_id: int):
@@ -485,13 +510,17 @@ async def start_ritual(api: MaxApi, user_id: int):
     data["last_active"] = now.isoformat()
     save_db(db)
     fsm_set(user_id, {"step": "blue", "complex": 1, "runes": [], "aminos": [], "images": []})
-    gif = await api.video_att(GIF_RITUAL)
     await api.send(
         user_id,
         "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **синюю** грань. Сколько точек?",
         kb(throw_row("🔵")),
-        media=[gif] if gif else None,
     )
+    gif = await api.video_att(GIF_RITUAL)
+    if gif:
+        try:
+            await api.send(user_id, "▶", media=[gif])
+        except Exception:
+            logging.exception("не отправилось видео обряда")
 
 
 async def on_throw(api: MaxApi, user_id: int, value: str):
