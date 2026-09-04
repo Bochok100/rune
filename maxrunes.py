@@ -94,6 +94,7 @@ def menu_kb():
         [link("📜 История метода", f"{PAGES}/method.html")],
         [link("🌬️ Буор, Ийэ и Салгын Кут", f"{PAGES}/kut.html")],
         [btn("🔮 Начать обряд", "start_ritual")],
+        [btn("🆔 Мой ID", "myid")],
         [link("🕯 Подготовка", f"{PAGES}/prep.html"), link("💬 Отзывы", f"{PAGES}/reviews.html")],
     )
 
@@ -118,6 +119,14 @@ class MaxApi:
             text = await resp.text()
             if resp.status >= 400:
                 logging.error("MAX POST %s -> %s %s", path, resp.status, text[:500])
+                resp.raise_for_status()
+            return json.loads(text) if text else {}
+
+    async def patch(self, path: str, json_body=None):
+        async with self.session.patch(f"{API}{path}", headers=self.headers, json=json_body) as resp:
+            text = await resp.text()
+            if resp.status >= 400:
+                logging.error("MAX PATCH %s -> %s %s", path, resp.status, text[:500])
                 resp.raise_for_status()
             return json.loads(text) if text else {}
 
@@ -315,6 +324,9 @@ async def handle_callback(api: MaxApi, user_id: int, payload: str, callback_id: 
     if payload == "start_ritual":
         await start_ritual(api, user_id)
         return
+    if payload == "myid":
+        await api.send(user_id, f"Ваш MAX ID: `{user_id}`")
+        return
     if payload == "noop":
         return
     if payload.startswith("throw_"):
@@ -334,11 +346,11 @@ async def handle_callback(api: MaxApi, user_id: int, payload: str, callback_id: 
 
 async def handle_text(api: MaxApi, user_id: int, text: str):
     raw = (text or "").strip()
-    low = raw.lower()
+    low = raw.lower().split("@")[0].strip()
     if low in {"/start", "start", "начать"}:
         await cmd_start(api, user_id)
         return
-    if low in {"/myid", "мой id", "id"}:
+    if low in {"/myid", "/id", "мой id", "мойid", "id", "🆔 мой id"}:
         await api.send(user_id, f"Ваш MAX ID: `{user_id}`")
         return
     if low.startswith("/grant"):
@@ -421,6 +433,15 @@ async def main():
         api = MaxApi(session, token)
         me = await api.get("/me")
         logging.info("MAX бот онлайн: @%s id=%s", me.get("username"), me.get("user_id"))
+        try:
+            await api.patch("/me/commands", json_body={
+                "commands": [
+                    {"name": "start", "description": "Запуск и меню"},
+                    {"name": "myid", "description": "Показать мой MAX ID"},
+                ]
+            })
+        except Exception:
+            logging.exception("Не удалось зарегистрировать команды MAX")
         marker = None
         if os.path.exists(MARKER_FILE):
             raw = open(MARKER_FILE).read().strip()
