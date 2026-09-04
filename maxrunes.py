@@ -22,9 +22,13 @@ from ritual_data import (
     find_rune_image,
     get_greeting_text,
     load_db,
+    parse_ritual_admin_args,
     restore_user_access,
+    ritual_unlimited,
     rune_page_url,
     save_db,
+    schedule_next_ritual,
+    set_ritual_mode,
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -524,7 +528,7 @@ async def start_ritual(api: MaxApi, user_id: int):
     data = ensure_user_record(db, key)
     now = datetime.now()
     next_ritual = datetime.fromisoformat(data.get("next_ritual_time", now.isoformat()))
-    if now < next_ritual:
+    if not ritual_unlimited(data) and now < next_ritual:
         left = next_ritual - now
         hours, rem = divmod(int(left.total_seconds()), 3600)
         minutes = rem // 60
@@ -646,7 +650,7 @@ async def pick_rune(api: MaxApi, user_id: int, st: dict, index: int):
             kb(throw_row("🔵")),
         )
         return
-    data["next_ritual_time"] = (now + timedelta(hours=12)).isoformat()
+    schedule_next_ritual(data, now)
     data["ritual_step"] = 0
     save_db(db)
     aminos = st.get("aminos", [])
@@ -707,6 +711,11 @@ async def handle_callback(api: MaxApi, user_id: int, payload: str, callback_id: 
         return
 
 
+def is_max_admin(user_id: int) -> bool:
+    admin = env("MAX_ADMIN_ID")
+    return bool(admin) and str(user_id) == admin
+
+
 async def handle_text(api: MaxApi, user_id: int, text: str):
     raw = (text or "").strip()
     low = raw.lower().split("@")[0].strip()
@@ -714,8 +723,7 @@ async def handle_text(api: MaxApi, user_id: int, text: str):
         await cmd_start(api, user_id)
         return
     if low.startswith("/grant"):
-        admin = env("MAX_ADMIN_ID")
-        if not admin or str(user_id) != admin:
+        if not is_max_admin(user_id):
             return
         parts = raw.split()
         db = load_db()
@@ -729,6 +737,35 @@ async def handle_text(api: MaxApi, user_id: int, text: str):
             await api.send(user_id, f"Пользователю {parts[1]} начислено {parts[2]} дн.")
         else:
             await api.send(user_id, "Формат: `/grant 30` или `/grant <max_id> 30`")
+        return
+    if low.startswith("/allow_ritual") or low.startswith("/обряд_лимит"):
+        if not is_max_admin(user_id):
+            return
+        parts = raw.split()[1:]
+        parsed = parse_ritual_admin_args(parts, str(user_id))
+        if not parsed:
+            await api.send(
+                user_id,
+                "Обряд:\n"
+                "`/allow_ritual` — сбросить таймер себе\n"
+                "`/allow_ritual inf` — безлимит себе\n"
+                "`/allow_ritual off` — снова 12 часов\n"
+                "`/allow_ritual <id> inf` — безлимит человеку\n"
+                "`/allow_ritual <id> off` — выключить",
+            )
+            return
+        target, mode = parsed
+        key = db_key(int(target))
+        db = load_db()
+        data = set_ritual_mode(db, key, mode)
+        save_db(db)
+        if mode == "unlimited":
+            msg = f"Безлимит обрядов включён для {target}."
+        elif mode == "off":
+            msg = f"Безлимит выключен для {target}."
+        else:
+            msg = f"Таймер обряда сброшен для {target}."
+        await api.send(user_id, msg)
         return
     if "обряд" in low:
         await start_ritual(api, user_id)
