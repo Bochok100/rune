@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Бот рун для мессенджера MAX. Telegram не трогает. Токен: MAX_BOT_TOKEN в .env"""
 import asyncio
+import base64
 import json
 import logging
 import os
+import ssl
 import urllib.parse
 from contextvars import ContextVar
 from datetime import datetime, timedelta
@@ -35,6 +37,85 @@ FSM_FILE = "max_fsm.json"
 MARKER_FILE = "max_marker.txt"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+
+RU_CA_URLS = [
+    "https://gu-st.ru/content/Other/doc/russian_trusted_root_ca.cer",
+    "https://gu-st.ru/content/Other/doc/russian_trusted_sub_ca.cer",
+]
+
+
+def der_or_pem_to_pem(data: bytes) -> bytes:
+    if b"BEGIN CERTIFICATE" in data:
+        return data
+    body = base64.encodebytes(data).decode("ascii")
+    pem = "-----BEGIN CERTIFICATE-----\n" + body + "-----END CERTIFICATE-----\n"
+    return pem.encode("ascii")
+
+
+def unverified_ssl() -> ssl.SSLContext:
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+async def download_mincifry_certs() -> list[str]:
+    import aiohttp
+
+    cert_dir = os.path.join(BASE_DIR, "certs")
+    os.makedirs(cert_dir, exist_ok=True)
+    paths = []
+    timeout = aiohttp.ClientTimeout(total=30)
+    connector = aiohttp.TCPConnector(ssl=unverified_ssl())
+    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+        for url in RU_CA_URLS:
+            name = url.rsplit("/", 1)[-1]
+            dest = os.path.join(cert_dir, name)
+            try:
+                async with session.get(url) as resp:
+                    raw = await resp.read()
+                if resp.status != 200 or len(raw) < 50:
+                    logging.warning("не скачался сертификат %s (%s)", url, resp.status)
+                    continue
+                pem_path = dest if dest.endswith(".pem") else dest + ".pem"
+                with open(pem_path, "wb") as f:
+                    f.write(der_or_pem_to_pem(raw))
+                paths.append(pem_path)
+                logging.info("Сохранён сертификат Минцифры: %s", pem_path)
+            except Exception:
+                logging.exception("ошибка загрузки %s", url)
+    return paths
+
+
+def ssl_with_certs(paths: list[str]) -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    for path in paths:
+        try:
+            ctx.load_verify_locations(cafile=path)
+        except Exception as e:
+            logging.warning("не загрузил %s: %s", path, e)
+    return ctx
+
+
+async def max_ssl_context() -> ssl.SSLContext:
+    if env("MAX_SSL_INSECURE") in {"1", "true", "yes"}:
+        logging.warning("MAX SSL проверка отключена (MAX_SSL_INSECURE=1)")
+        return unverified_ssl()
+    paths = []
+    cert_dir = os.path.join(BASE_DIR, "certs")
+    if os.path.isdir(cert_dir):
+        paths = [
+            os.path.join(cert_dir, name)
+            for name in os.listdir(cert_dir)
+            if name.endswith((".pem", ".crt", ".cer"))
+        ]
+    if not paths:
+        paths = await download_mincifry_certs()
+    if paths:
+        return ssl_with_certs(paths)
+    logging.warning("Сертификаты Минцифры не найдены — SSL без проверки, иначе MAX API недоступен")
+    return unverified_ssl()
 
 
 def env(name: str, default: str = "") -> str:
@@ -501,54 +582,65 @@ async def main():
 
     token = await wait_for_token()
     timeout = aiohttp.ClientTimeout(total=90)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        api = MaxApi(session, token)
-        try:
-            me = await api.get("/me")
-        except Exception:
-            logging.error(
-                "MAX не принял токен (401) или бот ещё на модерации. "
-                "Проверьте MAX_BOT_TOKEN в %s и статус в кабинете.",
-                ENV_PATH,
-            )
-            raise
-        logging.info("MAX бот онлайн: @%s id=%s", me.get("username"), me.get("user_id"))
-        try:
-            await api.patch("/me/commands", json_body={
-                "commands": [
-                    {"name": "start", "description": "Запуск и меню"},
-                    {"name": "myid", "description": "Показать мой MAX ID"},
-                ]
-            })
-        except Exception:
-            logging.exception("Не удалось зарегистрировать команды MAX")
-        marker = None
-        if os.path.exists(MARKER_FILE):
-            raw = open(MARKER_FILE).read().strip()
-            marker = int(raw) if raw.isdigit() else None
-        while True:
+    ssl_ctx = await max_ssl_context()
+    last_error = None
+    for attempt, ctx in enumerate((ssl_ctx, unverified_ssl()), start=1):
+        connector = aiohttp.TCPConnector(ssl=ctx)
+        async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+            api = MaxApi(session, token)
             try:
-                params = {"timeout": 30, "limit": 100}
-                if marker is not None:
-                    params["marker"] = marker
-                data = await api.get("/updates", params=params)
-                updates = data.get("updates") or []
-                if updates:
-                    logging.info("MAX получил %s событий", len(updates))
-                marker = data.get("marker", marker)
-                if marker is not None:
-                    with open(MARKER_FILE, "w") as f:
-                        f.write(str(marker))
-                for upd in data.get("updates") or []:
-                    try:
-                        await handle_update(api, upd)
-                    except Exception:
-                        logging.exception("ошибка обработки MAX update")
-            except asyncio.CancelledError:
+                me = await api.get("/me")
+            except Exception as e:
+                last_error = e
+                if attempt == 1 and "CERTIFICATE" in str(e).upper():
+                    logging.warning("Сертификат MAX не принят системой, повтор без проверки SSL")
+                    continue
+                logging.error(
+                    "MAX не принял токен или API недоступен: %s. Файл %s",
+                    e,
+                    ENV_PATH,
+                )
                 raise
+            logging.info("MAX бот онлайн: @%s id=%s", me.get("username"), me.get("user_id"))
+            try:
+                await api.patch("/me/commands", json_body={
+                    "commands": [
+                        {"name": "start", "description": "Запуск и меню"},
+                        {"name": "myid", "description": "Показать мой MAX ID"},
+                    ]
+                })
             except Exception:
-                logging.exception("MAX long poll")
-                await asyncio.sleep(3)
+                logging.exception("Не удалось зарегистрировать команды MAX")
+            marker = None
+            if os.path.exists(MARKER_FILE):
+                raw = open(MARKER_FILE).read().strip()
+                marker = int(raw) if raw.isdigit() else None
+            while True:
+                try:
+                    params = {"timeout": 30, "limit": 100}
+                    if marker is not None:
+                        params["marker"] = marker
+                    data = await api.get("/updates", params=params)
+                    updates = data.get("updates") or []
+                    if updates:
+                        logging.info("MAX получил %s событий", len(updates))
+                    marker = data.get("marker", marker)
+                    if marker is not None:
+                        with open(MARKER_FILE, "w") as f:
+                            f.write(str(marker))
+                    for upd in updates:
+                        try:
+                            await handle_update(api, upd)
+                        except Exception:
+                            logging.exception("ошибка обработки MAX update")
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logging.exception("MAX long poll")
+                    await asyncio.sleep(3)
+            return
+    if last_error:
+        raise last_error
 
 
 if __name__ == "__main__":
