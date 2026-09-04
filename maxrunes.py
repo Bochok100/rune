@@ -207,7 +207,6 @@ def menu_kb():
         [link("📜 История метода", f"{PAGES}/method.html")],
         [link("🌬️ Буор, Ийэ и Салгын Кут", f"{PAGES}/kut.html")],
         [btn("🔮 Начать обряд", "start_ritual")],
-        [btn("🆔 Мой ID", "myid")],
         [link("🕯 Подготовка", f"{PAGES}/prep.html"), link("💬 Отзывы", f"{PAGES}/reviews.html")],
     )
 
@@ -455,9 +454,6 @@ async def handle_callback(api: MaxApi, user_id: int, payload: str, callback_id: 
     if payload == "start_ritual":
         await start_ritual(api, user_id)
         return
-    if payload == "myid":
-        await api.send(user_id, f"Ваш MAX ID: `{user_id}`")
-        return
     if payload == "noop":
         return
     if payload.startswith("throw_"):
@@ -480,9 +476,6 @@ async def handle_text(api: MaxApi, user_id: int, text: str):
     low = raw.lower().split("@")[0].strip()
     if low in {"/start", "start", "начать"}:
         await cmd_start(api, user_id)
-        return
-    if low in {"/myid", "/id", "мой id", "мойid", "id", "🆔 мой id"}:
-        await api.send(user_id, f"Ваш MAX ID: `{user_id}`")
         return
     if low.startswith("/grant"):
         admin = env("MAX_ADMIN_ID")
@@ -605,8 +598,7 @@ async def main():
             try:
                 await api.patch("/me/commands", json_body={
                     "commands": [
-                        {"name": "start", "description": "Запуск и меню"},
-                        {"name": "myid", "description": "Показать мой MAX ID"},
+                    {"name": "start", "description": "Запуск и меню"},
                     ]
                 })
             except Exception:

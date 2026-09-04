@@ -179,7 +179,7 @@ def get_bottom_kb():
             ],
             [
                 KeyboardButton(text="💬 Отзывы", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/reviews.html")),
-                KeyboardButton(text="🆔 Мой ID")
+                KeyboardButton(text="🤝 Пригласить друга")
             ]
         ],
         resize_keyboard=True,
@@ -202,11 +202,6 @@ def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
     ] if nav_row else [
         [InlineKeyboardButton(text=f"✅ Выбрать эту руну", callback_data=f"rune_{current}")]
     ])
-
-@dp.message(Command("myid"))
-@dp.message(F.text.in_({"/myid", "🆔 Мой ID", "Мой ID", "мой id"}))
-async def cmd_myid(message: Message):
-    await send_html(message.answer, text=f"Ваш Telegram ID: `{message.from_user.id}`")
 
 @dp.message(Command("whois"))
 async def cmd_whois(message: Message, command: CommandObject):
@@ -910,7 +905,6 @@ async def main():
     _bot_username = me.username
     await bot.set_my_commands([
         BotCommand(command="start", description="Запуск и меню"),
-        BotCommand(command="myid", description="Показать мой Telegram ID"),
     ])
     await bot.delete_webhook(drop_pending_updates=True)
     asyncio.create_task(daily_notifier())
