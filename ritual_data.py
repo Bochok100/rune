@@ -5,6 +5,12 @@ from datetime import datetime, timedelta
 DB_FILE = "users_db.json"
 PAGES = "https://Bochok100.github.io/rune"
 
+SUB_PLANS = {
+    1: {"label": "1 месяц", "rub": 990, "days": 30},
+    3: {"label": "3 месяца", "rub": 2490, "days": 90},
+    12: {"label": "1 год", "rub": 9990, "days": 365},
+}
+
 BASE_MAP = {"1": "А", "2": "Ц", "3": "У", "4": "Г"}
 AMINO_ACIDS = {
     "Аргинин": {"codons": ["ЦГЦ", "ЦГУ", "ЦГА", "ЦГГ", "АГА", "АГГ"], "runes": ["Ч", "Y"]},
@@ -57,6 +63,24 @@ RUNE_IMAGES = {
     "Цистеин": ["Цистеин.jpg", "Цистеин.jpg"],
     "Селеноцистеин": ["Селеноцистеин.jpg"],
 }
+
+
+def encode_result_payload(aminos: list[str], images: list[str]) -> str:
+    order = list(AMINO_ACIDS.keys())
+    parts = []
+    for i, amino in enumerate(aminos):
+        try:
+            ai = order.index(amino)
+        except ValueError:
+            continue
+        files = RUNE_IMAGES.get(amino, [])
+        img = images[i] if i < len(images) else ""
+        try:
+            ii = files.index(img)
+        except ValueError:
+            ii = 0
+        parts.append(f"{ai}x{ii}")
+    return "r" + "-".join(parts) if parts else "result"
 
 
 def load_db():
@@ -114,6 +138,11 @@ def restore_user_access(db: dict, user_id: str, days: int, now: datetime | None 
     data["notified"] = 0
     data["paid"] = True
     return data
+
+
+def apply_subscription(db: dict, user_id: str, months: int, now: datetime | None = None) -> dict:
+    plan = SUB_PLANS.get(int(months), SUB_PLANS[1])
+    return restore_user_access(db, user_id, plan["days"], now)
 
 
 def ritual_unlimited(data: dict) -> bool:

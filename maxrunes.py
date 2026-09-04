@@ -29,6 +29,9 @@ from ritual_data import (
     save_db,
     schedule_next_ritual,
     set_ritual_mode,
+    encode_result_payload,
+    SUB_PLANS,
+    apply_subscription,
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -251,6 +254,18 @@ def throw_row(color_emoji: str) -> list:
     return [btn(f"{color_emoji} {i}", f"throw_{i}") for i in range(1, 5)]
 
 
+def telegram_bot_name() -> str:
+    return env("TELEGRAM_BOT_USERNAME") or "sakharune_bot"
+
+
+def pay_kb():
+    return kb(
+        [btn(f"💳 {SUB_PLANS[1]['label']} — {SUB_PLANS[1]['rub']} ₽", "pay_1")],
+        [btn(f"💳 {SUB_PLANS[3]['label']} — {SUB_PLANS[3]['rub']} ₽", "pay_3")],
+        [btn(f"💳 {SUB_PLANS[12]['label']} — {SUB_PLANS[12]['rub']} ₽", "pay_12")],
+    )
+
+
 def menu_kb():
     return kb(
         [open_app("📖 Об авторе", "author")],
@@ -383,7 +398,8 @@ class MaxApi:
         with open(path, "rb") as fh:
             content = fh.read()
         form = aiohttp.FormData()
-        form.add_field("data", content, filename=os.path.basename(path), content_type="application/octet-stream")
+        mime = "video/mp4" if path.lower().endswith(".mp4") else "application/octet-stream"
+        form.add_field("data", content, filename=os.path.basename(path), content_type=mime)
         async with self.session.post(url, data=form) as uploaded:
             body = await uploaded.text()
             if uploaded.status >= 400:
@@ -401,7 +417,7 @@ class MaxApi:
         if not path or not os.path.exists(path):
             return None
         try:
-            token = await asyncio.wait_for(self.upload_file(path, "video"), timeout=20)
+            token = await asyncio.wait_for(self.upload_file(path, "video"), timeout=45)
             return {"type": "video", "payload": {"token": token}}
         except Exception:
             logging.exception("не удалось загрузить видео %s", path)
@@ -480,9 +496,14 @@ class MaxApi:
         if last_error:
             raise last_error
 
-    async def answer(self, callback_id: str, notification: str = "Ок"):
+    async def answer(self, callback_id: str, notification: str | None = None):
+        if not callback_id:
+            return
         try:
-            await self.post("/answers", params={"callback_id": callback_id}, json_body={"notification": notification})
+            body = {}
+            if notification:
+                body["notification"] = notification
+            await self.post("/answers", params={"callback_id": callback_id}, json_body=body)
         except Exception as e:
             logging.warning("callback answer: %s", e)
 
@@ -513,13 +534,8 @@ async def cmd_start(api: MaxApi, user_id: int, payload: str | None = None):
                 pass
     text = get_greeting_text(data, datetime.now())
     text += "Нажмите кнопку ниже или напишите «обряд»."
-    await api.send(user_id, text, menu_kb())
     gif = await api.video_att(GIF_START)
-    if gif:
-        try:
-            await api.send(user_id, "▶", media=[gif])
-        except Exception:
-            logging.exception("не отправилось приветственное видео")
+    await api.send(user_id, text, menu_kb(), media=[gif] if gif else None)
 
 
 async def start_ritual(api: MaxApi, user_id: int):
@@ -545,17 +561,13 @@ async def start_ritual(api: MaxApi, user_id: int):
     data["last_active"] = now.isoformat()
     save_db(db)
     fsm_set(user_id, {"step": "blue", "complex": 1, "runes": [], "aminos": [], "images": []})
+    gif = await api.video_att(GIF_RITUAL)
     await api.send(
         user_id,
         "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **синюю** грань. Сколько точек?",
         kb(throw_row("🔵")),
+        media=[gif] if gif else None,
     )
-    gif = await api.video_att(GIF_RITUAL)
-    if gif:
-        try:
-            await api.send(user_id, "▶", media=[gif])
-        except Exception:
-            logging.exception("не отправилось видео обряда")
 
 
 async def on_throw(api: MaxApi, user_id: int, value: str):
@@ -666,7 +678,8 @@ async def pick_rune(api: MaxApi, user_id: int, st: dict, index: int):
         att = await api.image_att(filename=images[idx] if idx < len(images) else None)
         if att:
             photos.append(att)
-    result_btn = [open_app("📖 Получить результаты", "result")]
+    result_payload = encode_result_payload(aminos, images)
+    result_btn = [open_app("📖 Получить результаты", result_payload)]
     if now < trial_end:
         await api.send(
             user_id,
@@ -678,12 +691,14 @@ async def pick_rune(api: MaxApi, user_id: int, st: dict, index: int):
         await api.send(
             user_id,
             f"🎉 **Обряд завершён!**\nТриада: **{triad}**\n\n"
-            "Бесплатный период закончился. Оплата в MAX появится позже; "
-            "пока доступ можно открыть в Telegram-боте @sakharune_bot или командой администратора.",
+            "Бесплатный период закончился. Выберите тариф — оплата через Telegram "
+            "(счёт ЮKassa), доступ откроется и здесь, в MAX.",
             kb(
+                [btn(f"💳 {SUB_PLANS[1]['label']} — {SUB_PLANS[1]['rub']} ₽", "pay_1")],
+                [btn(f"💳 {SUB_PLANS[3]['label']} — {SUB_PLANS[3]['rub']} ₽", "pay_3")],
+                [btn(f"💳 {SUB_PLANS[12]['label']} — {SUB_PLANS[12]['rub']} ₽", "pay_12")],
                 result_btn,
                 [link("🌐 Результаты в браузере", result_url)],
-                [link("✈️ Открыть Telegram-бота", "https://t.me/sakharune_bot")],
             ),
             media=photos or None,
         )
@@ -704,6 +719,18 @@ async def handle_callback(api: MaxApi, user_id: int, payload: str, callback_id: 
         st["car"] = int(payload.split("_")[1])
         fsm_set(user_id, st)
         await show_car(api, user_id, st)
+        return
+    if payload.startswith("pay_"):
+        months = int(payload.split("_")[1])
+        plan = SUB_PLANS.get(months, SUB_PLANS[1])
+        url = f"https://t.me/{telegram_bot_name()}?start=mp_{user_id}_{months}"
+        await api.send(
+            user_id,
+            f"Оплата: **{plan['label']}** — **{plan['rub']} ₽**\n\n"
+            "MAX не выставляет свой счёт, поэтому оплата идёт в Telegram тем же ЮKassa. "
+            "После оплаты доступ откроется и в MAX — напишите «начать».",
+            kb([link(f"💳 Оплатить {plan['rub']} ₽", url)]),
+        )
         return
     if payload.startswith("rune_"):
         st = fsm_get(user_id)
@@ -872,6 +899,9 @@ async def main():
             BOT_META["user_id"] = me.get("user_id")
             if env("MAX_BOT_USERNAME"):
                 BOT_META["username"] = env("MAX_BOT_USERNAME").lstrip("@")
+            for gif_path in (GIF_START, GIF_RITUAL):
+                att = await api.video_att(gif_path)
+                logging.info("MAX видео %s: %s", gif_path, "готово" if att else "нет")
             try:
                 await api.patch("/me/commands", json_body={
                     "commands": [
