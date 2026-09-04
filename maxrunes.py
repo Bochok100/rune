@@ -19,6 +19,7 @@ from ritual_data import (
     RUNE_IMAGES,
     days_left_from,
     ensure_user_record,
+    find_rune_image,
     get_greeting_text,
     load_db,
     restore_user_access,
@@ -35,6 +36,9 @@ ENV_PATH = os.path.join(BASE_DIR, ".env")
 current_chat_id: ContextVar[int | None] = ContextVar("current_chat_id", default=None)
 FSM_FILE = "max_fsm.json"
 MARKER_FILE = "max_marker.txt"
+MEDIA_CACHE_FILE = "max_media.json"
+GIF_START = "gif1_v2.mp4"
+GIF_RITUAL = "gif2_v2.mp4"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -197,23 +201,92 @@ def link(text: str, url: str) -> dict:
     return {"type": "link", "text": text, "url": url}
 
 
+def miniapp_url(page: str = "app.html") -> str:
+    configured = env("MAX_MINIAPP_URL")
+    if configured and page in {"app.html", ""}:
+        return configured
+    return f"{PAGES}/{page.lstrip('/')}"
+
+
+def open_app(text: str, page: str, payload: str = "") -> dict:
+    """Кнопка всплывающего мини-приложения MAX (не браузер)."""
+    item = {"type": "open_app", "text": text, "web_app": miniapp_url(page)}
+    if payload:
+        item["payload"] = payload
+    return item
+
+
 def throw_row(color_emoji: str) -> list:
     return [btn(f"{color_emoji} {i}", f"throw_{i}") for i in range(1, 5)]
 
 
 def menu_kb():
     return kb(
-        [link("📖 Об авторе", f"{PAGES}/author.html")],
-        [link("📜 История метода", f"{PAGES}/method.html")],
-        [link("🌬️ Буор, Ийэ и Салгын Кут", f"{PAGES}/kut.html")],
+        [open_app("📖 Об авторе", "author.html", "author")],
+        [open_app("📜 История метода", "method.html", "method")],
+        [open_app("🌬️ Буор, Ийэ и Салгын Кут", "kut.html", "kut")],
         [btn("🔮 Начать обряд", "start_ritual")],
-        [link("🕯 Подготовка", f"{PAGES}/prep.html"), link("💬 Отзывы", f"{PAGES}/reviews.html")],
+        [open_app("🕯 Подготовка", "prep.html", "prep"), open_app("💬 Отзывы", "reviews.html", "reviews")],
     )
+
+
+def load_media_cache() -> dict:
+    if os.path.exists(MEDIA_CACHE_FILE):
+        try:
+            with open(MEDIA_CACHE_FILE, "r") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+    return {}
+
+
+def save_media_cache(data: dict):
+    with open(MEDIA_CACHE_FILE, "w") as f:
+        json.dump(data, f)
+
+
+def extract_upload_token(data: dict) -> str:
+    if not isinstance(data, dict):
+        return ""
+    if data.get("token"):
+        return str(data["token"])
+    photos = data.get("photos")
+    if isinstance(photos, dict):
+        for value in photos.values():
+            items = value if isinstance(value, list) else [value]
+            for item in reversed(items):
+                if isinstance(item, dict) and item.get("token"):
+                    return str(item["token"])
+    payload = data.get("payload")
+    if isinstance(payload, dict) and payload.get("token"):
+        return str(payload["token"])
+    return ""
+
+
+def demote_open_app(attachments: list) -> list:
+    converted = []
+    for att in attachments:
+        if att.get("type") != "inline_keyboard":
+            converted.append(att)
+            continue
+        rows = []
+        for row in att.get("payload", {}).get("buttons", []):
+            new_row = []
+            for item in row:
+                if item.get("type") == "open_app":
+                    new_row.append(link(item.get("text", "Открыть"), item.get("web_app") or miniapp_url()))
+                else:
+                    new_row.append(item)
+            rows.append(new_row)
+        converted.append({"type": "inline_keyboard", "payload": {"buttons": rows}})
+    return converted
 
 
 class MaxApi:
     def __init__(self, session, token: str):
         self.session = session
+        self.token = token
         self.headers = {"Authorization": token, "Content-Type": "application/json"}
 
     async def get(self, path: str, params=None):
@@ -221,7 +294,7 @@ class MaxApi:
             text = await resp.text()
             if resp.status >= 400:
                 logging.error("MAX GET %s -> %s %s", path, resp.status, text[:500])
-                resp.raise_for_status()
+                raise RuntimeError(f"GET {path} {resp.status}: {text[:300]}")
             return json.loads(text) if text else {}
 
     async def post(self, path: str, params=None, json_body=None):
@@ -231,7 +304,7 @@ class MaxApi:
             text = await resp.text()
             if resp.status >= 400:
                 logging.error("MAX POST %s -> %s %s", path, resp.status, text[:500])
-                resp.raise_for_status()
+                raise RuntimeError(f"POST {path} {resp.status}: {text[:400]}")
             return json.loads(text) if text else {}
 
     async def patch(self, path: str, json_body=None):
@@ -239,30 +312,119 @@ class MaxApi:
             text = await resp.text()
             if resp.status >= 400:
                 logging.error("MAX PATCH %s -> %s %s", path, resp.status, text[:500])
-                resp.raise_for_status()
+                raise RuntimeError(f"PATCH {path} {resp.status}: {text[:300]}")
             return json.loads(text) if text else {}
 
-    async def send(self, user_id: int, text: str, attachments=None, chat_id=None):
+    async def upload_file(self, path: str, media_type: str) -> str:
+        cached = load_media_cache()
+        key = f"{media_type}:{os.path.abspath(path)}"
+        if cached.get(key):
+            return cached[key]
+        auth = {"Authorization": self.token}
+        async with self.session.post(f"{API}/uploads", headers=auth, params={"type": media_type}) as resp:
+            raw = await resp.text()
+            if resp.status >= 400:
+                raise RuntimeError(f"uploads {resp.status}: {raw[:300]}")
+            init = json.loads(raw) if raw else {}
+        url = init.get("url")
+        token = extract_upload_token(init)
+        if not url:
+            raise RuntimeError(f"uploads без url: {init}")
+        import aiohttp
+
+        with open(path, "rb") as fh:
+            content = fh.read()
+        form = aiohttp.FormData()
+        form.add_field("data", content, filename=os.path.basename(path), content_type="application/octet-stream")
+        async with self.session.post(url, data=form) as uploaded:
+            body = await uploaded.text()
+            if uploaded.status >= 400:
+                raise RuntimeError(f"file upload {uploaded.status}: {body[:300]}")
+            parsed = json.loads(body) if body else {}
+        token = extract_upload_token(parsed) or token
+        if not token:
+            raise RuntimeError(f"нет token после загрузки {path}: {parsed}")
+        cached[key] = token
+        save_media_cache(cached)
+        logging.info("MAX загрузил %s как %s", path, media_type)
+        return token
+
+    async def video_att(self, path: str) -> dict | None:
+        if not path or not os.path.exists(path):
+            return None
+        try:
+            token = await self.upload_file(path, "video")
+            return {"type": "video", "payload": {"token": token}}
+        except Exception:
+            logging.exception("не удалось загрузить видео %s", path)
+            return None
+
+    async def image_att(self, filename: str | None = None, amino: str | None = None, index: int = 0) -> dict | None:
+        local = None
+        if amino:
+            local = find_rune_image(amino, index)
+        if not local and filename:
+            candidate = os.path.join("images", "runes", filename)
+            if os.path.exists(candidate):
+                local = candidate
+        if local:
+            try:
+                token = await self.upload_file(local, "image")
+                return {"type": "image", "payload": {"token": token}}
+            except Exception:
+                logging.exception("загрузка картинки %s", local)
+        url = rune_page_url(amino, index) if amino else None
+        if not url and filename:
+            url = f"{PAGES}/images/runes/{urllib.parse.quote(filename)}"
+        if url:
+            return {"type": "image", "payload": {"url": url}}
+        return None
+
+    async def send(self, user_id: int, text: str, attachments=None, chat_id=None, media=None):
         chat_id = chat_id or current_chat_id.get()
-        body = {"text": text}
-        if attachments:
-            body["attachments"] = attachments
+        atts = list(attachments or [])
+        if media:
+            atts = list(media) + atts
+        body = {"text": text, "format": "markdown"}
+        if atts:
+            body["attachments"] = atts
         attempts = []
         if chat_id:
             attempts.append({"chat_id": chat_id})
         attempts.append({"user_id": user_id})
         last_error = None
-        for params in attempts:
+        for delay in (0, 2, 4, 8, 12):
+            if delay:
+                await asyncio.sleep(delay)
+            not_ready = False
+            for params in attempts:
+                try:
+                    return await self.post("/messages", params=params, json_body=body)
+                except Exception as e:
+                    last_error = e
+                    if is_not_ready(e):
+                        not_ready = True
+                        logging.warning("MAX вложение ещё обрабатывается, повтор")
+                        break
+                    logging.warning("MAX send %s failed: %s", params, e)
+            if not_ready:
+                continue
+            break
+        keyboard_only = [a for a in atts if a.get("type") == "inline_keyboard"]
+        fallbacks = []
+        if keyboard_only:
+            fallbacks.append(keyboard_only)
+            fallbacks.append(demote_open_app(keyboard_only))
+        for kb_atts in fallbacks:
             try:
-                return await self.post("/messages", params=params, json_body=body)
+                return await self.post(
+                    "/messages",
+                    params=attempts[0],
+                    json_body={"text": text, "format": "markdown", "attachments": kb_atts},
+                )
             except Exception as e:
                 last_error = e
-                logging.warning("MAX send %s failed: %s", params, e)
-                if attachments:
-                    try:
-                        return await self.post("/messages", params=params, json_body={"text": text})
-                    except Exception as e2:
-                        last_error = e2
+                logging.warning("MAX send fallback: %s", e)
         if last_error:
             raise last_error
 
@@ -299,7 +461,8 @@ async def cmd_start(api: MaxApi, user_id: int, payload: str | None = None):
                 pass
     text = get_greeting_text(data, datetime.now())
     text += "Нажмите кнопку ниже или напишите «обряд»."
-    await api.send(user_id, text, menu_kb())
+    gif = await api.video_att(GIF_START)
+    await api.send(user_id, text, menu_kb(), media=[gif] if gif else None)
 
 
 async def start_ritual(api: MaxApi, user_id: int):
@@ -322,10 +485,12 @@ async def start_ritual(api: MaxApi, user_id: int):
     data["last_active"] = now.isoformat()
     save_db(db)
     fsm_set(user_id, {"step": "blue", "complex": 1, "runes": [], "aminos": [], "images": []})
+    gif = await api.video_att(GIF_RITUAL)
     await api.send(
         user_id,
-        "🔮 **Комплекс 1.** Брось палочки и посмотри на **синюю** грань. Сколько точек?",
+        "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **синюю** грань. Сколько точек?",
         kb(throw_row("🔵")),
+        media=[gif] if gif else None,
     )
 
 
@@ -384,9 +549,11 @@ async def show_car(api: MaxApi, user_id: int, st: dict):
             btn("▶", f"car_{(i + 1) % total}"),
         ])
     rows.append([btn("✅ Выбрать эту руну", f"rune_{i}")])
-    if url:
+    photo = await api.image_att(amino=amino, index=i)
+    caption = f"🧬 **{amino}**\n🔮 Руна: **{symbol}**"
+    if not photo and url:
         rows.append([link("📷 Открыть картинку", url)])
-    await api.send(user_id, f"🧬 **{amino}**\n🔮 Руна: **{symbol}**", kb(*rows))
+    await api.send(user_id, caption, kb(*rows), media=[photo] if photo else None)
 
 
 async def pick_rune(api: MaxApi, user_id: int, st: dict, index: int):
@@ -430,11 +597,18 @@ async def pick_rune(api: MaxApi, user_id: int, st: dict, index: int):
     result_url = f"{PAGES}/result.html?{q}"
     trial_end = datetime.fromisoformat(data.get("trial_end", now.isoformat()))
     triad = " | ".join(runes)
+    photos = []
+    for idx, amino_name in enumerate(aminos):
+        att = await api.image_att(filename=images[idx] if idx < len(images) else None)
+        if att:
+            photos.append(att)
+    result_btn = [open_app("📖 Получить результаты", f"result.html?{q}", "result")]
     if now < trial_end:
         await api.send(
             user_id,
             f"🎉 **Обряд завершён!**\nТриада: **{triad}**\nОсталось дней: {days_left_from(trial_end, now)}",
-            kb([link("📖 Получить результаты", result_url)]),
+            kb(result_btn, [link("🌐 Результаты в браузере", result_url)]),
+            media=photos or None,
         )
     else:
         await api.send(
@@ -443,9 +617,11 @@ async def pick_rune(api: MaxApi, user_id: int, st: dict, index: int):
             "Бесплатный период закончился. Оплата в MAX появится позже; "
             "пока доступ можно открыть в Telegram-боте @sakharune_bot или командой администратора.",
             kb(
-                [link("📖 Страница результатов", result_url)],
+                result_btn,
+                [link("🌐 Результаты в браузере", result_url)],
                 [link("✈️ Открыть Telegram-бота", "https://t.me/sakharune_bot")],
             ),
+            media=photos or None,
         )
 
 

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Якутские руны</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 16px; background-color: var(--tg-theme-bg-color, #1a1a1a); color: var(--tg-theme-text-color, #ffffff); line-height: 1.6; margin: 0; }
+        .card { background-color: var(--tg-theme-secondary-bg-color, #242424); padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); text-align: center; border: 1px solid rgba(255,255,255,0.03); }
+        h1 { color: var(--tg-theme-button-color, #5288c1); font-size: 22px; margin: 8px 0 16px; }
+        a.btn { display: block; width: 100%; box-sizing: border-box; padding: 14px; border-radius: 12px; background-color: var(--tg-theme-button-color, #5288c1); color: var(--tg-theme-button-text-color, #ffffff); text-decoration: none; font-weight: 600; font-size: 15px; margin-top: 10px; }
+        a.btn.secondary { background: transparent; border: 1px solid var(--tg-theme-button-color, #5288c1); color: var(--tg-theme-button-color, #5288c1); }
+        p { opacity: 0.85; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="card" id="hub">
+        <h1>Якутские руны</h1>
+        <p>Откройте нужный раздел — страница откроется внутри MAX.</p>
+        <a class="btn" href="author.html">Об авторе</a>
+        <a class="btn" href="method.html">История метода</a>
+        <a class="btn" href="kut.html">Буор, Ийэ и Салгын Кут</a>
+        <a class="btn" href="prep.html">Подготовка к обряду</a>
+        <a class="btn secondary" href="reviews.html">Отзывы</a>
+    </div>
+    <script>
+        (function () {
+            var w = window.WebApp || (window.Telegram && window.Telegram.WebApp);
+            if (w) {
+                try { w.ready(); if (w.expand) w.expand(); } catch (e) {}
+            }
+            var params = new URLSearchParams(window.location.search);
+            var start = params.get("WebAppStartParam") || params.get("startapp") || "";
+            if (!start && w && w.initDataUnsafe) {
+                start = w.initDataUnsafe.start_param || "";
+                if (start && typeof start === "object") {
+                    start = start.start_param || start.payload || "";
+                }
+            }
+            if (window.location.hash) {
+                var hp = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+                start = start || hp.get("WebAppStartParam") || hp.get("startapp") || "";
+            }
+            var pages = {
+                author: "author.html",
+                method: "method.html",
+                kut: "kut.html",
+                prep: "prep.html",
+                reviews: "reviews.html",
+                result: "result.html"
+            };
+            if (!start) return;
+            var key = String(start).split("_")[0];
+            if (pages[key] && key !== "result") {
+                window.location.replace(pages[key]);
+            }
+        })();
+    </script>
+</body>
+</html>
