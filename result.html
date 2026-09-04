@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Расшифровка Обряда</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="runes_map.js"></script>
     <style>
         body { 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
@@ -104,8 +105,8 @@
 
     <script>
         try {
-            window.Telegram.WebApp.expand();
-
+            var tw = window.WebApp || (window.Telegram && window.Telegram.WebApp);
+            if (tw) { try { tw.ready && tw.ready(); tw.expand && tw.expand(); } catch (e) {} }
             const descriptions = {
                 "Аланин": "Аланин — важный источник энергии для мышечных тканей, головного мозга и центральной нервной системы. Укрепляет иммунную систему путем участия в обмене сахаров и органических кислот, а также помогает организму преобразовывать глюкозу в энергию.",
                 "Аргинин": "Аргинин — условно-незаменимая аминокислота. Играет важную роль в делении клеток, восстановлении после травм, выведении шлаков и поддержании иммунной функции. Улучшает кровообращение.",
@@ -133,8 +134,20 @@
             };
 
             const params = new URLSearchParams(window.location.search);
-            const aminosParam = params.get('aminos');
-            const imagesParam = params.get('images'); 
+            let aminosParam = params.get('aminos');
+            let imagesParam = params.get('images');
+            if (!aminosParam) {
+                var w = window.WebApp || (window.Telegram && window.Telegram.WebApp);
+                var start = params.get("p") || params.get("WebAppStartParam") || "";
+                if (!start && w && w.initDataUnsafe) {
+                    start = w.initDataUnsafe.start_param || "";
+                }
+                var decoded = window.decodeRunePayload && window.decodeRunePayload(start);
+                if (decoded) {
+                    aminosParam = decoded.aminos.join(",");
+                    imagesParam = decoded.images.join(",");
+                }
+            } 
             
             let html = "";
 

@@ -59,6 +59,24 @@ RUNE_IMAGES = {
 }
 
 
+def encode_result_payload(aminos: list[str], images: list[str]) -> str:
+    order = list(AMINO_ACIDS.keys())
+    parts = []
+    for i, amino in enumerate(aminos):
+        try:
+            ai = order.index(amino)
+        except ValueError:
+            continue
+        files = RUNE_IMAGES.get(amino, [])
+        img = images[i] if i < len(images) else ""
+        try:
+            ii = files.index(img)
+        except ValueError:
+            ii = 0
+        parts.append(f"{ai}x{ii}")
+    return "r" + "-".join(parts) if parts else "result"
+
+
 def load_db():
     if os.path.exists(DB_FILE):
         with open(DB_FILE, "r") as f:
