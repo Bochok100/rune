@@ -30,6 +30,8 @@ from ritual_data import (
     schedule_next_ritual,
     set_ritual_mode,
     encode_result_payload,
+    SUB_PLANS,
+    apply_subscription,
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -250,6 +252,18 @@ def open_app(text: str, payload: str = "") -> dict:
 
 def throw_row(color_emoji: str) -> list:
     return [btn(f"{color_emoji} {i}", f"throw_{i}") for i in range(1, 5)]
+
+
+def telegram_bot_name() -> str:
+    return env("TELEGRAM_BOT_USERNAME") or "sakharune_bot"
+
+
+def pay_kb():
+    return kb(
+        [btn(f"💳 {SUB_PLANS[1]['label']} — {SUB_PLANS[1]['rub']} ₽", "pay_1")],
+        [btn(f"💳 {SUB_PLANS[3]['label']} — {SUB_PLANS[3]['rub']} ₽", "pay_3")],
+        [btn(f"💳 {SUB_PLANS[12]['label']} — {SUB_PLANS[12]['rub']} ₽", "pay_12")],
+    )
 
 
 def menu_kb():
@@ -677,12 +691,14 @@ async def pick_rune(api: MaxApi, user_id: int, st: dict, index: int):
         await api.send(
             user_id,
             f"🎉 **Обряд завершён!**\nТриада: **{triad}**\n\n"
-            "Бесплатный период закончился. Оплата в MAX появится позже; "
-            "пока доступ можно открыть в Telegram-боте @sakharune_bot или командой администратора.",
+            "Бесплатный период закончился. Выберите тариф — оплата через Telegram "
+            "(счёт ЮKassa), доступ откроется и здесь, в MAX.",
             kb(
+                [btn(f"💳 {SUB_PLANS[1]['label']} — {SUB_PLANS[1]['rub']} ₽", "pay_1")],
+                [btn(f"💳 {SUB_PLANS[3]['label']} — {SUB_PLANS[3]['rub']} ₽", "pay_3")],
+                [btn(f"💳 {SUB_PLANS[12]['label']} — {SUB_PLANS[12]['rub']} ₽", "pay_12")],
                 result_btn,
                 [link("🌐 Результаты в браузере", result_url)],
-                [link("✈️ Открыть Telegram-бота", "https://t.me/sakharune_bot")],
             ),
             media=photos or None,
         )
@@ -703,6 +719,18 @@ async def handle_callback(api: MaxApi, user_id: int, payload: str, callback_id: 
         st["car"] = int(payload.split("_")[1])
         fsm_set(user_id, st)
         await show_car(api, user_id, st)
+        return
+    if payload.startswith("pay_"):
+        months = int(payload.split("_")[1])
+        plan = SUB_PLANS.get(months, SUB_PLANS[1])
+        url = f"https://t.me/{telegram_bot_name()}?start=mp_{user_id}_{months}"
+        await api.send(
+            user_id,
+            f"Оплата: **{plan['label']}** — **{plan['rub']} ₽**\n\n"
+            "MAX не выставляет свой счёт, поэтому оплата идёт в Telegram тем же ЮKassa. "
+            "После оплаты доступ откроется и в MAX — напишите «начать».",
+            kb([link(f"💳 Оплатить {plan['rub']} ₽", url)]),
+        )
         return
     if payload.startswith("rune_"):
         st = fsm_get(user_id)

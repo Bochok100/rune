@@ -70,6 +70,8 @@ from ritual_data import (
     AMINO_ACIDS,
     BASE_MAP,
     RUNE_IMAGES,
+    SUB_PLANS,
+    apply_subscription,
     days_left_from,
     ensure_user_record,
     find_rune_image,
@@ -165,6 +167,41 @@ class Ritual(StatesGroup):
     waiting_for_rune_choice = State()
     waiting_for_carousel = State()
     waiting_for_payment = State()
+
+def telegram_pay_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"💳 {p['label']} — {p['rub']:,} ₽".replace(",", " "), callback_data=f"pay_{m}")]
+        for m, p in SUB_PLANS.items()
+    ])
+
+async def send_plan_invoice(chat_id: int, months: int, invoice_payload: str):
+    plan = SUB_PLANS.get(int(months), SUB_PLANS[1])
+    if not PAYMENT_TOKEN:
+        await send_html(
+            bot.send_message,
+            chat_id=chat_id,
+            text="Оплата не настроена: в `.env` пустой `PAYMENT_TOKEN` (токен из BotFather → Payments).",
+        )
+        return False
+    try:
+        await bot.send_invoice(
+            chat_id=chat_id,
+            title="Доступ к результатам",
+            description=f"{plan['label']} и вступление в закрытый клуб.",
+            payload=invoice_payload,
+            provider_token=PAYMENT_TOKEN,
+            currency="RUB",
+            prices=[LabeledPrice(label=plan["label"], amount=int(plan["rub"]) * 100)],
+        )
+        return True
+    except Exception:
+        logging.exception("не удалось выставить счёт Telegram")
+        await send_html(
+            bot.send_message,
+            chat_id=chat_id,
+            text="Не получилось открыть оплату. Проверьте PAYMENT_TOKEN в BotFather или напишите администратору.",
+        )
+        return False
 
 def get_main_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -514,6 +551,10 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     referrer_id = None
     if args and args.startswith("ref_"):
         referrer_id = args.split("_")[1]
+    if args and args.startswith("mp_"):
+        parts = args.split("_")
+        if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
+            await send_plan_invoice(message.chat.id, int(parts[2]), args)
 
     if user_id not in db or isinstance(db[user_id], str):
         trial_days = 3 
@@ -793,11 +834,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             username = await cached_bot_username()
             ref_link = f"https://t.me/{username}?start=ref_{user_id}"
 
-            kb_pay = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💳 1 месяц — 990 ₽", callback_data="pay_1")],
-                [InlineKeyboardButton(text="💳 3 месяца — 2 490 ₽", callback_data="pay_3")],
-                [InlineKeyboardButton(text="💳 1 год — 9 990 ₽", callback_data="pay_12")]
-            ])
+            kb_pay = telegram_pay_kb()
             
             pay_text = (
                 "🎉 **ОБРЯД ЗАВЕРШЕН!**\n\n"
@@ -815,25 +852,8 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
 async def process_payment_selection(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     months = int(callback.data.split("_")[1])
-    
-    prices_map = {
-        1: ("Подписка на 1 месяц", 99000, "sub_1"),
-        3: ("Подписка на 3 месяца", 249000, "sub_3"),
-        12: ("Подписка на 1 год", 999000, "sub_12")
-    }
-    
-    label, amount, payload = prices_map[months]
-    price = [LabeledPrice(label=label, amount=amount)]
-    
-    await bot.send_invoice(
-        chat_id=callback.message.chat.id,
-        title="Доступ к результатам",
-        description=f"{label} и вступление в закрытый клуб.",
-        payload=payload,
-        provider_token=PAYMENT_TOKEN,
-        currency="RUB",
-        prices=price
-    )
+    plan = SUB_PLANS.get(months, SUB_PLANS[1])
+    await send_plan_invoice(callback.message.chat.id, months, f"sub_{months}")
 
 @dp.pre_checkout_query()
 async def pre_checkout_process(pre_checkout: PreCheckoutQuery):
@@ -843,24 +863,25 @@ async def pre_checkout_process(pre_checkout: PreCheckoutQuery):
 async def successful_payment(message: Message, state: FSMContext):
     payload = message.successful_payment.invoice_payload
     now = datetime.now()
-    
-    if payload.startswith("sub_") or payload == "unlock_result":
-        months = 1
-        if payload == "sub_3": months = 3
-        elif payload == "sub_12": months = 12
-        
-        days_to_add = months * 30 if months < 12 else 365
-        
+    months = 1
+    max_id = None
+    if payload.startswith("mp_"):
+        bits = payload.split("_")
+        if len(bits) >= 3 and bits[2].isdigit():
+            max_id = bits[1]
+            months = int(bits[2])
+    elif payload.startswith("sub_"):
+        raw = payload.split("_", 1)[1]
+        months = int(raw) if raw.isdigit() else 1
+    plan = SUB_PLANS.get(months, SUB_PLANS[1])
+    days_to_add = plan["days"]
+
+    if payload.startswith("sub_") or payload.startswith("mp_") or payload == "unlock_result":
         db = load_db()
-        user_id = str(message.chat.id)
-        if user_id in db and isinstance(db[user_id], dict):
-            current_end = datetime.fromisoformat(db[user_id].get("trial_end", now.isoformat()))
-            start_date = current_end if current_end > now else now
-            
-            db[user_id]["trial_end"] = (start_date + timedelta(days=days_to_add)).isoformat()
-            schedule_next_ritual(db[user_id], now)
-            db[user_id]["notified"] = 0 
-            save_db(db)
+        apply_subscription(db, str(message.chat.id), months, now)
+        if max_id and max_id.isdigit():
+            apply_subscription(db, f"max:{max_id}", months, now)
+        save_db(db)
             
         data = await state.get_data()
         runes = data.get('final_runes', [])
