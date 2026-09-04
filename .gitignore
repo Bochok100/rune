@@ -1,4 +1,6 @@
 .env
+venv/
+file_ids.json
 __pycache__/
 *.pyc
 users_db.json

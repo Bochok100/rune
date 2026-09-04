@@ -2,6 +2,8 @@ import asyncio
 import logging
 import json
 import os
+import re
+import html as html_module
 import urllib.parse
 from datetime import datetime, timedelta
 
@@ -21,7 +23,7 @@ from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.exceptions import TelegramConflictError, TelegramUnauthorizedError
+from aiogram.exceptions import TelegramBadRequest, TelegramConflictError, TelegramUnauthorizedError
 from redis.asyncio import Redis
 
 # --- УМНАЯ ЗАГРУЗКА ТОКЕНОВ ИЗ СЕЙФА ---
@@ -64,6 +66,80 @@ redis = Redis(host=REDIS_HOST, port=REDIS_PORT)
 storage = RedisStorage(redis=redis)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
+
+FILE_IDS_PATH = "file_ids.json"
+_file_ids_cache = None
+_bot_username = None
+
+def md_to_html(text: str) -> str:
+    if not text:
+        return text
+    converted = html_module.escape(text, quote=False)
+    converted = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", converted)
+    converted = re.sub(r"`([^`]+)`", r"<code>\1</code>", converted)
+    converted = re.sub(r"(?<![a-zA-Z0-9])_([^_]+?)_(?![a-zA-Z0-9])", r"<i>\1</i>", converted)
+    return converted
+
+async def send_html(method, *args, **kwargs):
+    original_text = kwargs.get("text")
+    original_caption = kwargs.get("caption")
+    if original_text:
+        kwargs["text"] = md_to_html(original_text)
+    if original_caption:
+        kwargs["caption"] = md_to_html(original_caption)
+    kwargs["parse_mode"] = "HTML"
+    try:
+        return await method(*args, **kwargs)
+    except TelegramBadRequest as e:
+        if "parse" not in str(e).lower() and "entities" not in str(e).lower():
+            raise
+        if original_text is not None:
+            kwargs["text"] = original_text
+        if original_caption is not None:
+            kwargs["caption"] = original_caption
+        kwargs.pop("parse_mode", None)
+        return await method(*args, **kwargs)
+
+def load_file_ids() -> dict:
+    global _file_ids_cache
+    if _file_ids_cache is None:
+        if os.path.exists(FILE_IDS_PATH):
+            with open(FILE_IDS_PATH, "r") as f:
+                _file_ids_cache = json.load(f)
+        else:
+            _file_ids_cache = {}
+    return _file_ids_cache
+
+def remember_file_id(path: str, file_id: str):
+    ids = load_file_ids()
+    if ids.get(path) != file_id:
+        ids[path] = file_id
+        with open(FILE_IDS_PATH, "w") as f:
+            json.dump(ids, f)
+
+def media_ref(path: str):
+    file_id = load_file_ids().get(path)
+    return file_id if file_id else FSInputFile(path)
+
+async def cached_bot_username() -> str:
+    global _bot_username
+    if not _bot_username:
+        me = await bot.get_me()
+        _bot_username = me.username
+    return _bot_username
+
+async def send_cached_animation(message: Message, path: str, **kwargs):
+    msg = await send_html(message.answer_animation, animation=media_ref(path), **kwargs)
+    fid = (msg.animation.file_id if msg.animation else None) or (msg.video.file_id if msg.video else None)
+    if fid:
+        remember_file_id(path, fid)
+    return msg
+
+async def send_cached_photo(chat_id: int, path: str, **kwargs):
+    msg = await send_html(bot.send_photo, chat_id=chat_id, photo=media_ref(path), **kwargs)
+    if msg.photo:
+        remember_file_id(path, msg.photo[-1].file_id)
+    return msg
 
 BASE_MAP = {"1": "А", "2": "Ц", "3": "У", "4": "Г"}
 AMINO_ACIDS = {
@@ -256,7 +332,7 @@ def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
 
 @dp.message(Command("myid"))
 async def cmd_myid(message: Message):
-    await message.answer(f"Ваш Telegram ID: `{message.from_user.id}`", parse_mode="Markdown")
+    await send_html(message.answer, text=f"Ваш Telegram ID: `{message.from_user.id}`")
 
 @dp.message(Command("whois"))
 async def cmd_whois(message: Message, command: CommandObject):
@@ -265,14 +341,14 @@ async def cmd_whois(message: Message, command: CommandObject):
     args = (command.args or "").split()
     target_id = args[0] if args else str(message.from_user.id)
     if not target_id.isdigit():
-        await message.answer("Использование: `/whois <telegram_id>`", parse_mode="Markdown")
+        await send_html(message.answer, text="Использование: `/whois <telegram_id>`")
         return
     db = load_db()
     data = db.get(target_id)
     if not isinstance(data, dict):
-        await message.answer(f"Пользователь `{target_id}` не найден в базе.", parse_mode="Markdown")
+        await send_html(message.answer, text=f"Пользователь `{target_id}` не найден в базе.")
         return
-    await message.answer(format_access_status(target_id, data), parse_mode="Markdown")
+    await send_html(message.answer, text=format_access_status(target_id, data))
 
 @dp.message(Command("grant"))
 async def cmd_grant(message: Message, command: CommandObject):
@@ -284,12 +360,14 @@ async def cmd_grant(message: Message, command: CommandObject):
     elif len(args) == 2:
         target_id, days_raw = args[0], args[1]
     else:
-        await message.answer(
+        await send_html(
+            message.answer,
+            text=(
             "Восстановление доступа:\n"
             "`/grant <telegram_id> <дни>`\n"
             "`/grant <дни>` — продлить себе\n\n"
-            "Примеры:\n`/grant 123456789 30`\n`/grant 7`",
-            parse_mode="Markdown"
+            "Примеры:\n`/grant 123456789 30`\n`/grant 7`"
+            ),
         )
         return
     if not target_id.isdigit() or not days_raw.lstrip("-").isdigit():
@@ -304,15 +382,15 @@ async def cmd_grant(message: Message, command: CommandObject):
     data = restore_user_access(db, target_id, days)
     save_db(db)
     status = format_access_status(target_id, data)
-    await message.answer(f"🔓 **Доступ восстановлен на {days} дн.**\n\n{status}", parse_mode="Markdown")
+    await send_html(message.answer, text=f"🔓 **Доступ восстановлен на {days} дн.**\n\n{status}")
 
     if int(target_id) != message.from_user.id:
         try:
             left = days_left_from(datetime.fromisoformat(data["trial_end"]), datetime.now())
-            await bot.send_message(
+            await send_html(
+                bot.send_message,
                 chat_id=int(target_id),
                 text=f"🔓 **Ваш доступ восстановлен.**\n\nАктивен ещё **{left}** дн. Напишите /start, чтобы продолжить.",
-                parse_mode="Markdown"
             )
         except Exception:
             await message.answer("⚠️ Пользователю не удалось отправить уведомление (возможно, он не запускал бота).")
@@ -324,7 +402,7 @@ async def cmd_allow_ritual(message: Message, command: CommandObject):
     args = (command.args or "").split()
     target_id = args[0] if args else str(message.from_user.id)
     if not target_id.isdigit():
-        await message.answer("Использование: `/allow_ritual <telegram_id>`", parse_mode="Markdown")
+        await send_html(message.answer, text="Использование: `/allow_ritual <telegram_id>`")
         return
     db = load_db()
     now = datetime.now()
@@ -334,7 +412,7 @@ async def cmd_allow_ritual(message: Message, command: CommandObject):
     data["notified_12h"] = False
     data["notified_incomplete"] = False
     save_db(db)
-    await message.answer(f"🔮 Таймер обряда сброшен для `{target_id}`.", parse_mode="Markdown")
+    await send_html(message.answer, text=f"🔮 Таймер обряда сброшен для `{target_id}`.")
 
 @dp.message(Command("check_images"))
 async def cmd_check_images(message: Message):
@@ -352,7 +430,7 @@ async def cmd_check_images(message: Message):
     report += f"✅ Найдено файлов: {found}\n❌ Отсутствует: {len(missing)}\n\n"
     if missing: report += "⚠️ **Не найдены файлы:**\n" + "\n".join(missing)
     else: report += "🎉 **Все картинки на месте!**"
-    await message.answer(report, parse_mode="Markdown")
+    await send_html(message.answer, text=report)
 
 @dp.message(Command("show_images"))
 async def cmd_show_images(message: Message):
@@ -366,7 +444,7 @@ async def cmd_show_images(message: Message):
             if os.path.exists(path):
                 caption = f"🧪 Аминокислота: **{amino}**\n📁 Файл: `{img}`\n🔮 На фото должна быть руна: **{rune_symbol}**"
                 try:
-                    await bot.send_photo(chat_id=message.chat.id, photo=FSInputFile(path), caption=caption, parse_mode="Markdown")
+                    await send_cached_photo(message.chat.id, path, caption=caption)
                     await asyncio.sleep(0.5)
                 except Exception: pass
     await message.answer("✅ Выгрузка завершена!")
@@ -482,7 +560,7 @@ async def web_app_data_handler(message: Message, state: FSMContext):
                 f"💵 **Сумма к оплате:** {data['price']} руб.\n\n"
                 f"💬 *Клиенту выставлен счет. Ждем поступления средств...*"
             )
-            await bot.send_message(chat_id=MY_ID, text=admin_pending_text, parse_mode="Markdown")
+            await send_html(bot.send_message, chat_id=MY_ID, text=admin_pending_text)
             price_rub = data.get("price", 400)
             prices = [LabeledPrice(label=f"Набор палочек ({data['delivery']})", amount=price_rub * 100)]
             await bot.send_invoice(
@@ -508,8 +586,8 @@ async def reset_timer(message: Message, state: FSMContext):
 
 @dp.message(F.text == "🤝 Пригласить друга")
 async def referral_menu(message: Message):
-    bot_info = await bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start=ref_{message.from_user.id}"
+    username = await cached_bot_username()
+    ref_link = f"https://t.me/{username}?start=ref_{message.from_user.id}"
     
     db = load_db()
     user_id = str(message.from_user.id)
@@ -525,7 +603,7 @@ async def referral_menu(message: Message):
         f"`{ref_link}`\n\n"
         "_(Нажмите на ссылку, чтобы скопировать и отправьте её друзьям)_"
     )
-    await message.answer(text, parse_mode="Markdown")
+    await send_html(message.answer, text=text)
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
@@ -551,10 +629,10 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
                 db[referrer_id]["notified"] = 0 
                 
                 try:
-                    await bot.send_message(
+                    await send_html(
+                        bot.send_message,
                         chat_id=int(referrer_id),
                         text="🎉 **По вашей ссылке присоединился новый участник!**\nВам начислено `+3 дня` доступа к боту 🎁",
-                        parse_mode="Markdown"
                     )
                 except Exception:
                     pass
@@ -579,9 +657,9 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     caption = get_greeting_text(db[user_id], now)
     
     if os.path.exists("gif1_v2.mp4"):
-        await message.answer_animation(animation=FSInputFile("gif1_v2.mp4"), caption=caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
+        await send_cached_animation(message, "gif1_v2.mp4", caption=caption, reply_markup=get_main_menu_kb())
     else:
-        await message.answer(caption, reply_markup=get_main_menu_kb(), parse_mode="Markdown")
+        await send_html(message.answer, text=caption, reply_markup=get_main_menu_kb())
     await message.answer("👇 Для начала работы используйте меню ниже:", reply_markup=get_bottom_kb())
 
 @dp.message(F.text == "🔮 Начать обряд")
@@ -604,8 +682,8 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
         hours, remainder = divmod(time_left.seconds, 3600)
         minutes, _ = divmod(remainder, 60)
         
-        bot_info = await bot.get_me()
-        ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+        username = await cached_bot_username()
+        ref_link = f"https://t.me/{username}?start=ref_{user_id}"
         
         promo_text = (
             f"⏳ Обряд уже проведен! Следующий будет доступен через {hours} ч. {minutes} мин.\n\n"
@@ -613,7 +691,7 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
             "Пригласите друга по вашей ссылке:\n"
             f"`{ref_link}`"
         )
-        await message.answer(promo_text, parse_mode="Markdown")
+        await send_html(message.answer, text=promo_text)
         return
         
     # ФИКСИРУЕМ СТАРТ ОБРЯДА
@@ -627,9 +705,9 @@ async def process_ritual_start(message: Message, state: FSMContext, user_id: str
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Бросай как на примере выше\n\n🔮 **Комплекс 1.** Брось палочки и посмотри на **СИНЮЮ** грань. Сколько точек?"
     if os.path.exists("gif2_v2.mp4"):
-        await message.answer_animation(animation=FSInputFile("gif2_v2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
+        await send_cached_animation(message, "gif2_v2.mp4", caption=caption, reply_markup=kb)
     else:
-        await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
+        await send_html(message.answer, text=caption, reply_markup=kb)
     await state.set_state(Ritual.waiting_for_blue)
 
 @dp.callback_query(Ritual.waiting_for_blue, F.data.startswith("throw_"))
@@ -639,9 +717,9 @@ async def proc_blue(callback: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🟢 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Теперь посмотри на **ЗЕЛЕНУЮ** грань. Сколько точек?"
     if callback.message.animation or callback.message.video or callback.message.photo:
-        await callback.message.edit_caption(caption=caption, parse_mode="Markdown", reply_markup=kb)
+        await send_html(callback.message.edit_caption, caption=caption, reply_markup=kb)
     else:
-        await callback.message.edit_text(text=caption, parse_mode="Markdown", reply_markup=kb)
+        await send_html(callback.message.edit_text, text=caption, reply_markup=kb)
     await state.set_state(Ritual.waiting_for_green)
 
 @dp.callback_query(Ritual.waiting_for_green, F.data.startswith("throw_"))
@@ -651,9 +729,9 @@ async def proc_green(callback: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔴 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
     caption = "Теперь посмотри на **КРАСНУЮ** грань. Сколько точек?"
     if callback.message.animation or callback.message.video or callback.message.photo:
-        await callback.message.edit_caption(caption=caption, parse_mode="Markdown", reply_markup=kb)
+        await send_html(callback.message.edit_caption, caption=caption, reply_markup=kb)
     else:
-        await callback.message.edit_text(text=caption, parse_mode="Markdown", reply_markup=kb)
+        await send_html(callback.message.edit_text, text=caption, reply_markup=kb)
     await state.set_state(Ritual.waiting_for_red)
 
 @dp.callback_query(Ritual.waiting_for_red, F.data.startswith("throw_"))
@@ -690,34 +768,39 @@ async def show_carousel(chat_id: int, state: FSMContext, amino: str, runes: list
     kb = make_carousel_kb(current, total)
 
     await state.update_data(carousel_index=current)
-    caption = f"🧬 **{amino}**\n🔮 Руна: **{rune_symbol}**\n\n_{current+1} из {total} — листайте ◀ ▶ и выберите нужную_"
+    caption = f"🧬 **{amino}**\n🔮 Руна: **{rune_symbol}**\n\n{current+1} из {total} — листайте ◀ ▶ и выберите нужную"
+    html_caption = md_to_html(caption)
     data = await state.get_data()
     carousel_msg_id = data.get("carousel_msg_id")
     carousel_file_ids = data.get("carousel_file_ids", {})
 
     if img_path:
-        file_id = carousel_file_ids.get(str(current))
+        file_id = carousel_file_ids.get(str(current)) or load_file_ids().get(img_path)
         if carousel_msg_id and file_id:
             try:
-                await bot.edit_message_media(chat_id=chat_id, message_id=carousel_msg_id, media=InputMediaPhoto(media=file_id, caption=caption, parse_mode="Markdown"), reply_markup=kb)
+                await bot.edit_message_media(chat_id=chat_id, message_id=carousel_msg_id, media=InputMediaPhoto(media=file_id, caption=html_caption, parse_mode="HTML"), reply_markup=kb)
                 return
-            except Exception: pass
+            except Exception:
+                pass
         if carousel_msg_id and not file_id:
             try:
                 await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
-            except Exception: pass
-        msg = await bot.send_photo(chat_id=chat_id, photo=FSInputFile(img_path), caption=caption, parse_mode="Markdown", reply_markup=kb)
+            except Exception:
+                pass
+        msg = await send_cached_photo(chat_id, img_path, caption=caption, reply_markup=kb)
         carousel_file_ids[str(current)] = msg.photo[-1].file_id
         await state.update_data(carousel_msg_id=msg.message_id, carousel_file_ids=carousel_file_ids)
     else:
         if carousel_msg_id:
             try:
-                await bot.edit_message_text(chat_id=chat_id, message_id=carousel_msg_id, text=caption, parse_mode="Markdown", reply_markup=kb)
+                await send_html(bot.edit_message_text, chat_id=chat_id, message_id=carousel_msg_id, text=caption, reply_markup=kb)
                 return
             except Exception:
-                try: await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
-                except Exception: pass
-        msg = await bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown", reply_markup=kb)
+                try:
+                    await bot.delete_message(chat_id=chat_id, message_id=carousel_msg_id)
+                except Exception:
+                    pass
+        msg = await send_html(bot.send_message, chat_id=chat_id, text=caption, reply_markup=kb)
         await state.update_data(carousel_msg_id=msg.message_id)
 
 @dp.callback_query(Ritual.waiting_for_carousel, F.data.startswith("carousel_"))
@@ -779,10 +862,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
         await state.update_data(complex_num=complex_num + 1, final_runes=runes, final_aminos=aminos, final_images=images_list)
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"🔵 {i}", callback_data=f"throw_{i}") for i in range(1, 5)]])
         caption = f"✅ Выбрана руна: **{rune}**\n\n🔮 **Комплекс {complex_num + 1}.** СИНЯЯ грань:"
-        if os.path.exists("gif2_v2.mp4"):
-            await message.answer_animation(animation=FSInputFile("gif2_v2.mp4"), caption=caption, parse_mode="Markdown", reply_markup=kb)
-        else:
-            await message.answer(caption, parse_mode="Markdown", reply_markup=kb)
+        await send_html(message.answer, text=caption, reply_markup=kb)
         await state.set_state(Ritual.waiting_for_blue)
     else:
         # ОБРЯД ЗАВЕРШЕН — ОБНУЛЯЕМ ШАГ
@@ -806,13 +886,13 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада: **{' | '.join(runes)}**\n\n"
             final_text += f"🎁 У вас идет оплаченный период (осталось дней: {days_left}). Чтобы расшифровать послание Салгын Кут и активировать силу рун, нажмите кнопку **ПОЛУЧИТЬ РЕЗУЛЬТАТЫ** ниже 👇"
             
-            await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
+            await send_html(message.answer, text=final_text, reply_markup=kb_final)
             await state.clear()
         else:
             await state.update_data(final_runes=runes, final_aminos=aminos, final_images=images_list)
             
-            bot_info = await bot.get_me()
-            ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
+            username = await cached_bot_username()
+            ref_link = f"https://t.me/{username}?start=ref_{user_id}"
 
             kb_pay = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💳 1 месяц — 990 ₽", callback_data="pay_1")],
@@ -829,7 +909,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
                 f"🔗 Ваша ссылка: `{ref_link}`"
             )
             
-            await message.answer(pay_text, reply_markup=kb_pay, parse_mode="Markdown")
+            await send_html(message.answer, text=pay_text, reply_markup=kb_pay)
             await state.set_state(Ritual.waiting_for_payment)
 
 @dp.callback_query(Ritual.waiting_for_payment, F.data.startswith("pay_"))
@@ -897,7 +977,7 @@ async def successful_payment(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="💎 Вступить в сообщество", url="https://t.me/+SjHfMeVK4GA3N2Ey")]
         ])
         final_text = f"✅ **Оплата прошла успешно! Добро пожаловать.**\n\nВаша подписка продлена на {days_to_add} дней.\nТвоя финальная триада: **{' | '.join(runes)}**\n\n👇 Нажмите на кнопку ниже, чтобы вступить в наше закрытое сообщество!"
-        await message.answer(final_text, reply_markup=kb_final, parse_mode="Markdown")
+        await send_html(message.answer, text=final_text, reply_markup=kb_final)
         await state.clear()
         
     elif payload == "pay_sticks":
@@ -915,7 +995,7 @@ async def successful_payment(message: Message, state: FSMContext):
             f"📍 **Адрес:** {address}\n\n"
             f"💬 *Деньги получены. Свяжитесь с клиентом для отправки заказа!*"
         )
-        await bot.send_message(chat_id=MY_ID, text=admin_text, parse_mode="Markdown")
+        await send_html(bot.send_message, chat_id=MY_ID, text=admin_text)
         await message.answer("🎉 **Поздравляем с приобретением!**\nОплата прошла успешно. Скоро с вами свяжутся, или вы можете написать напрямую: @daayakh")
         await state.update_data(pending_order=None)
 
@@ -940,6 +1020,8 @@ async def main():
         raise
 
     logging.info("Бот онлайн: @%s id=%s", me.username, me.id)
+    global _bot_username
+    _bot_username = me.username
     await bot.delete_webhook(drop_pending_updates=True)
     asyncio.create_task(daily_notifier())
     try:
