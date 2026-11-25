@@ -64,6 +64,13 @@ MY_ID = env_int("ADMIN_ID", 297967650)
 if admin_raw.isdigit():
     MY_ID = int(admin_raw)
 
+ADMIN_IDS = {MY_ID}
+ADMIN_IDS.update(
+    int(admin_id)
+    for admin_id in re.split(r"[,\s]+", env("EXTRA_ADMIN_IDS"))
+    if re.fullmatch(r"[1-9][0-9]{0,15}", admin_id)
+)
+
 redis = Redis(host=REDIS_HOST, port=REDIS_PORT)
 storage = RedisStorage(redis=redis)
 bot = Bot(token=BOT_TOKEN)
@@ -265,7 +272,7 @@ def make_carousel_kb(current: int, total: int) -> InlineKeyboardMarkup:
 
 @dp.message(Command("whois"))
 async def cmd_whois(message: Message, command: CommandObject):
-    if message.from_user.id != MY_ID:
+    if message.from_user is None or message.from_user.id not in ADMIN_IDS:
         return
     args = (command.args or "").split()
     target_id = args[0] if args else str(message.from_user.id)
@@ -281,7 +288,7 @@ async def cmd_whois(message: Message, command: CommandObject):
 
 @dp.message(Command("grant"))
 async def cmd_grant(message: Message, command: CommandObject):
-    if message.from_user.id != MY_ID:
+    if message.from_user is None or message.from_user.id not in ADMIN_IDS:
         return
     args = (command.args or "").split()
     if len(args) == 1:
@@ -326,7 +333,7 @@ async def cmd_grant(message: Message, command: CommandObject):
 
 @dp.message(Command("allow_ritual"))
 async def cmd_allow_ritual(message: Message, command: CommandObject):
-    if message.from_user.id != MY_ID:
+    if message.from_user is None or message.from_user.id not in ADMIN_IDS:
         return
     args = (command.args or "").split()
     parsed = parse_ritual_admin_args(args, str(message.from_user.id))
@@ -359,7 +366,7 @@ async def cmd_allow_ritual(message: Message, command: CommandObject):
 
 @dp.message(Command("check_images"))
 async def cmd_check_images(message: Message):
-    if message.from_user.id != MY_ID: return
+    if message.from_user is None or message.from_user.id not in ADMIN_IDS: return
     report = "📊 **Отчет по картинкам рун:**\n\n"
     missing = []
     found = 0
@@ -377,7 +384,7 @@ async def cmd_check_images(message: Message):
 
 @dp.message(Command("show_images"))
 async def cmd_show_images(message: Message):
-    if message.from_user.id != MY_ID: return
+    if message.from_user is None or message.from_user.id not in ADMIN_IDS: return
     await message.answer("🔍 Начинаю выгрузку всех картинок...\nСравни символ на фото с символом в тексте!")
     for amino, files in RUNE_IMAGES.items():
         for i, img in enumerate(files):
