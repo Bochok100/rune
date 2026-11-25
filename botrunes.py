@@ -23,7 +23,10 @@ from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.exceptions import TelegramBadRequest, TelegramConflictError, TelegramUnauthorizedError
+from aiogram.exceptions import (
+    TelegramBadRequest, TelegramConflictError, TelegramForbiddenError, TelegramNetworkError,
+    TelegramRetryAfter, TelegramUnauthorizedError,
+)
 from redis.asyncio import Redis
 
 # --- УМНАЯ ЗАГРУЗКА ТОКЕНОВ ИЗ СЕЙФА ---
@@ -557,8 +560,45 @@ async def referral_menu(message: Message):
     )
     await send_html(message.answer, text=text)
 
+MEDITATION_FORM = (
+    "/meditation\n"
+    "Имя: …\n"
+    "Фамилия: …\n"
+    "WhatsApp: …"
+)
+
+
+@dp.message(Command("meditation"), F.chat.type == "private")
+async def cmd_meditation(message: Message, command: CommandObject):
+    application = re.fullmatch(
+        r"Имя: ([^\r\n]{1,70})\r?\nФамилия: ([^\r\n]{1,70})\r?\n(WhatsApp|MAX): ([^\r\n]{1,100})",
+        (command.args or "").strip(),
+    )
+    if not application or not all(value.strip() for value in application.groups()):
+        await message.answer("Заполните форму на сайте или отправьте одним сообщением:\n\n" + MEDITATION_FORM)
+        return
+
+    first_name, last_name, messenger, contact = (value.strip() for value in application.groups())
+    try:
+        await bot.send_message(
+            chat_id=MY_ID,
+            text=f"Запись на «Үс Кут»\nИмя: {first_name}\nФамилия: {last_name}\n{messenger}: {contact}",
+            parse_mode=None,
+        )
+    except (TelegramBadRequest, TelegramUnauthorizedError, TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter):
+        logging.warning("Не удалось передать заявку на медитацию администратору")
+        await message.answer("Не удалось передать заявку. Повторите отправку позже.")
+        return
+
+    await message.answer("Заявка передана. Для уточнения записи с вами свяжутся по указанному контакту.")
+
+
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, command: CommandObject):
+    if command.args == "meditation" and message.chat.type == "private":
+        await message.answer("Для записи на «Үс Кут» отправьте заявку, подготовленную на сайте, одним сообщением.")
+        return
+
     db = load_db()
     user_id = str(message.from_user.id)
     now = datetime.now()
