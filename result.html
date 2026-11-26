@@ -6,6 +6,7 @@
     <title>Расшифровка Обряда</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="runes_map.js"></script>
+    <script src="rune_windows.js"></script>
     <style>
         body { 
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
@@ -24,44 +25,19 @@
             margin-bottom: 16px; 
             box-shadow: 0 4px 12px rgba(0,0,0,0.15); 
             border: 1px solid rgba(255,255,255,0.03); 
-            cursor: pointer; 
-            transition: background-color 0.2s;
         }
-        .card:active { background-color: rgba(255, 255, 255, 0.05); }
-
-        .accordion-header {
-            padding: 16px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .accordion-header h2 { 
-            color: var(--tg-theme-button-color, #5288c1); 
-            font-size: 18px; 
-            margin: 0; 
-            font-weight: 700; 
-        }
-        .arrow { 
-            transition: transform 0.3s ease; 
-            font-size: 14px; 
-            color: var(--tg-theme-button-color, #5288c1);
-        }
-        .card.active .arrow { transform: rotate(180deg); }
-
-        .accordion-content {
-            max-height: 0; 
-            overflow: hidden; 
-            opacity: 0;
-            transition: all 0.4s ease-in-out; 
-            padding: 0 16px;
-        }
-        .card.active .accordion-content {
-            max-height: 3000px; 
-            opacity: 1;
-            padding: 0 16px 16px 16px;
-        }
-
-        .amino-img { width: 80px; height: 80px; border-radius: 12px; object-fit: contain; border: 2px solid var(--tg-theme-button-color, #5288c1); box-shadow: 0 4px 8px rgba(0,0,0,0.2); flex-shrink: 0; }
+        .rune-sequence { display: flex; flex-wrap: nowrap; direction: ltr; gap: clamp(6px, 2vw, 16px); max-width: 760px; margin: 20px auto; padding: 0; list-style: none; }
+        .rune-sequence li { flex: 1 1 0; min-width: 0; margin: 0; }
+        .rune-button { display: block; width: 100%; padding: 0; overflow: hidden; border-radius: 12px; border: 2px solid var(--tg-theme-button-color, #5288c1); background: #f2f2f2; cursor: zoom-in; }
+        .rune-button:focus-visible { outline: 3px solid var(--tg-theme-button-color, #5288c1); outline-offset: 4px; }
+        .rune-image { display: block; width: 100%; height: auto; background: #f2f2f2; }
+        .rune-error { padding: 10px; font-size: 13px; color: #1a1a1a; }
+        .sequence-hint { text-align: center; }
+        #rune-preview { width: min(90vw, 560px); max-height: 90vh; overflow: auto; padding: 16px; box-sizing: border-box; border: 1px solid var(--tg-theme-button-color, #5288c1); border-radius: 16px; background: var(--tg-theme-bg-color, #1a1a1a); color: var(--tg-theme-text-color, #fff); }
+        #rune-preview::backdrop { background: rgba(0,0,0,.8); }
+        .preview-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+        .preview-header p { margin: 0; }
+        .preview-close { padding: 10px 14px; border: 1px solid currentColor; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
 
         .instruction { margin-top: 30px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 20px; }
         .instruction h2 { color: #e0a96d; font-size: 18px; margin: 0 0 10px 0;}
@@ -75,29 +51,42 @@
 
     <h1>🔮 Ваша расшифровка</h1>
     
-    <p>Независимый проект. Названия на карточках используются как символические обозначения.</p>
+    <p class="sequence-hint">Руны расположены слева направо в порядке вашего выбора. Нажмите на знак, чтобы рассмотреть его крупнее.</p>
     <div id="content">Обработка данных...</div>
+    <dialog id="rune-preview" aria-labelledby="preview-title">
+        <div class="preview-header">
+            <p id="preview-title"></p>
+            <button type="button" class="preview-close" id="preview-close">Закрыть</button>
+        </div>
+        <div id="preview-image"></div>
+    </dialog>
 
     <div class="instruction">
         <h1 style="text-align:center; font-size: 20px;">Проведение ритуала</h1>
 
         <div class="card">
+            <h2>✍ Перепишите руны</h2>
+            <p>Сначала перепишите рунические знаки на полоску бумаги в той же последовательности, в которой они показаны выше, слева направо. Оставьте слева чистый край, за который будете держать полоску.</p>
+            <p><strong>Перепишите каждый знак точно как на изображении: прямо, без поворота или зеркального отражения. Высота линий, их длина, взаимное расположение и все детали имеют значение.</strong></p>
+            <p>Переписывайте руны с особой внимательностью к деталям. При необходимости откройте знак крупнее, затем внимательно сверьте все три изображения с рисунком на бумаге. Только после этого переходите к работе с огнём.</p>
+        </div>
+
+        <div class="card">
             <h2>🕯 Работа с огнем</h2>
+            <p><strong>Соблюдайте пожарную безопасность.</strong> Установите свечу на устойчивую негорючую подставку, вдали от штор, одежды и других горючих предметов. Подготовьте негорючую посуду и воду для тушения. Уберите волосы и свободные рукава от пламени. Не оставляйте огонь без присмотра; детям не следует выполнять эти действия самостоятельно.</p>
             <p>Возьмите полоску бумаги левой рукой за чистый левый край, на котором нет рун. Зажгите свечу.</p>
             <p>Начиная с первой руны, расположенной с правого края полоски, последовательно сожгите все три руны.</p>
             <p><i>Достаточно, чтобы сгорели сами рунические знаки.</i></p>
             <p>После этого положите бумагу на заранее подготовленную негорючую поверхность и дайте ей погаснуть.</p>
+            <p>Не допускайте приближения пламени к руке. Если огонь выходит из-под контроля, немедленно прекратите действие и потушите его. Убедитесь, что свеча и остатки бумаги полностью погашены и остыли.</p>
         </div>
 
         <div class="card">
             <h2>🌬 Завершение</h2>
-            <p>Оставшуюся часть бумаги можно выбросить, а образовавшуюся сажу можно смыть водой в раковину или развеять по ветру через окно.</p>
+            <p>После полного остывания оставшуюся часть бумаги можно выбросить, а образовавшуюся сажу необходимо смыть водой в раковину.</p>
         </div>
 
         <div class="card" style="background: rgba(77, 171, 247, 0.05); border: 1px dashed #4dabf7;">
-            <h2>🌌 Традиционное значение</h2>
-            <p>Практика основана на традиционных представлениях народа саха о трёх составляющих человека — три Кут. Данный метод направлен на работу с <b>Салгын Кут</b> (воздушной составляющей).</p>
-            <p>В рамках традиционного мировоззрения считается, что через такую работу человек помогает восстановить внутреннюю гармонию и восполнить недостающие качества, символически связанные с полученными рунами и рекомендациями.</p>
             <p style="font-size: 11px; color: var(--tg-theme-hint-color, #888); margin-top: 10px;">Данная практика относится к духовным традициям и не заменяет медицинские рекомендации специалистов.</p>
         </div>
     </div>
@@ -125,29 +114,81 @@
             const aminos = aminosParam ? aminosParam.split(",") : [];
             const images = imagesParam ? imagesParam.split(",") : [];
             const cards = [];
+            const svgNS = "http://www.w3.org/2000/svg";
+            const preview = document.getElementById("rune-preview");
+            document.getElementById("preview-close").addEventListener("click", () => preview.close());
+
+            function runeImage(filename, position) {
+                const bounds = window.RUNE_IMAGE_WINDOWS[filename];
+                if (!bounds) throw new Error("Missing rune image window");
+                const svg = document.createElementNS(svgNS, "svg");
+                // One common coordinate system keeps every stroke upright and proportional.
+                // Only the existing image's text areas are hidden; image bytes stay unchanged.
+                svg.setAttribute("viewBox", "0 540 1290 1200");
+                svg.setAttribute("class", "rune-image");
+                svg.setAttribute("role", "img");
+                svg.setAttribute("aria-label", `Руна ${position + 1}`);
+                const defs = document.createElementNS(svgNS, "defs");
+                const clip = document.createElementNS(svgNS, "clipPath");
+                const id = `rune-window-${position}`;
+                clip.setAttribute("id", id);
+                clip.setAttribute("clipPathUnits", "userSpaceOnUse");
+                const rect = document.createElementNS(svgNS, "rect");
+                rect.setAttribute("x", "0");
+                rect.setAttribute("y", String(bounds[0]));
+                rect.setAttribute("width", "1290");
+                rect.setAttribute("height", String(bounds[1] - bounds[0]));
+                clip.append(rect);
+                defs.append(clip);
+                const image = document.createElementNS(svgNS, "image");
+                image.setAttribute("href", `images/runes/${encodeURIComponent(filename)}`);
+                image.setAttribute("width", "1290");
+                image.setAttribute("height", "2293");
+                image.setAttribute("clip-path", `url(#${id})`);
+                svg.append(defs, image);
+                return svg;
+            }
 
             aminos.forEach((amino, index) => {
                 if (!window.RUNE_AMINO_ORDER.includes(amino)) return;
 
                 const files = window.RUNE_IMAGES[amino];
                 const filename = files.includes(images[index]) ? images[index] : files[0];
-                const src = `images/runes/${encodeURIComponent(filename)}`;
-
-                cards.push(`
-                    <div class="card" onclick="this.classList.toggle('active')">
-                        <div class="accordion-header">
-                            <h2>${cards.length + 1}. ${amino}</h2>
-                            <span class="arrow">▼</span>
-                        </div>
-                        <div class="accordion-content">
-                            <img src="${src}" alt="Руна — ${amino}" class="amino-img">
-                        </div>
-                    </div>`);
+                const item = document.createElement("li");
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "rune-button";
+                button.setAttribute("aria-label", `Увеличить руну ${cards.length + 1}`);
+                const svg = runeImage(filename, cards.length);
+                const position = cards.length;
+                svg.querySelector("image").addEventListener("error", () => {
+                    button.disabled = true;
+                    const error = document.createElement("p");
+                    error.className = "rune-error";
+                    error.textContent = "Изображение руны не загрузилось. Обновите страницу.";
+                    button.replaceChildren(error);
+                });
+                button.append(svg);
+                button.addEventListener("click", () => {
+                    document.getElementById("preview-title").textContent = `Руна ${position + 1} из ${cards.length}`;
+                    const enlarged = svg.cloneNode(true);
+                    enlarged.querySelector("clipPath").id = "rune-window-preview";
+                    enlarged.querySelector("image").setAttribute("clip-path", "url(#rune-window-preview)");
+                    document.getElementById("preview-image").replaceChildren(enlarged);
+                    preview.showModal();
+                });
+                item.append(button);
+                cards.push(item);
             });
 
             const content = document.getElementById("content");
             if (cards.length) {
-                content.innerHTML = cards.join("");
+                const sequence = document.createElement("ol");
+                sequence.className = "rune-sequence";
+                sequence.setAttribute("aria-label", "Руны в порядке выбора");
+                sequence.dir = "ltr";
+                sequence.append(...cards);
+                content.replaceChildren(sequence);
             } else {
                 content.textContent = "Данные для расшифровки не найдены.";
             }

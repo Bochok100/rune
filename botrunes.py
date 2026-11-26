@@ -884,7 +884,7 @@ async def save_rune_and_continue(message: Message, state: FSMContext, rune: str,
             days_left = max(0, int(time_left.total_seconds() / 86400) + (1 if time_left.total_seconds() % 86400 > 0 else 0))
             
             final_text = f"🎉 **ОБРЯД ЗАВЕРШЕН!**\n\nТвоя финальная триада: **{' | '.join(runes)}**\n\n"
-            final_text += f"🎁 У вас идет оплаченный период (осталось дней: {days_left}). Чтобы расшифровать послание Салгын Кут и активировать силу рун, нажмите кнопку **ПОЛУЧИТЬ РЕЗУЛЬТАТЫ** ниже 👇"
+            final_text += f"🎁 У вас идет оплаченный период (осталось дней: {days_left}). Чтобы расшифровать значение, нажмите кнопку **ПОЛУЧИТЬ РЕЗУЛЬТАТЫ** ниже 👇"
             
             await send_html(message.answer, text=final_text, reply_markup=kb_final)
             await state.clear()
