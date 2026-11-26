@@ -218,20 +218,7 @@ def format_access_status(user_id: str, data: dict, now: datetime | None = None) 
 
 
 def get_greeting_text(user_data, now):
-    trial_end = datetime.fromisoformat(user_data.get("trial_end", now.isoformat()))
-    greeting = (
-        "Приветствую. Это Ваш цифровой помощник в достижении гармонии. "
-        "Используем мудрость салгын кут и силу рунических символов, "
-        "чтобы помочь вам восполнить утраченный ресурс.\n\n"
-    )
-    if now < trial_end:
-        greeting += f"🎁 **У вас активно {days_left_from(trial_end, now)} дня доступа!**\n\n"
-    else:
-        greeting += (
-            "⚠️ **Ваша подписка неактивна.**\n"
-            "Пройдите обряд, чтобы выбрать тариф и получить доступ к результатам.\n\n"
-        )
-    return greeting
+    return "Это ваш цифровой помощник в достижении гармонии."
 
 
 def find_rune_image(amino: str, index: int) -> str | None:

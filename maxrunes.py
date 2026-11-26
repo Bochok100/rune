@@ -570,7 +570,6 @@ async def cmd_start(api: MaxApi, user_id: int, payload: str | None = None):
             except Exception:
                 pass
     text = get_greeting_text(data, datetime.now())
-    text += "Нажмите кнопку ниже или напишите «обряд»."
     gif = await api.gif_att(GIF_START)
     await api.send(user_id, text, menu_kb(), media=[gif] if gif else None)
 
