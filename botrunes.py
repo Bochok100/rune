@@ -231,9 +231,6 @@ async def send_plan_invoice(chat_id: int, months: int, invoice_payload: str):
 
 def get_main_menu_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📖 Об авторе", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/author.html"))],
-        [InlineKeyboardButton(text="📜 История метода", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/method.html"))],
-        [InlineKeyboardButton(text="🌬️ Буор, Ийэ и Салгын Кут", web_app=WebAppInfo(url="https://Bochok100.github.io/rune/kut.html"))],
         [InlineKeyboardButton(text="🔮 Начать обряд", callback_data="start_ritual")]
     ])
 

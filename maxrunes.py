@@ -269,9 +269,6 @@ def pay_kb():
 
 def menu_kb():
     return kb(
-        [open_app("📖 Об авторе", "author")],
-        [open_app("📜 История метода", "method")],
-        [open_app("🌬️ Буор, Ийэ и Салгын Кут", "kut")],
         [btn("🔮 Начать обряд", "start_ritual")],
         [open_app("🕯 Подготовка", "prep"), open_app("💬 Отзывы", "reviews")],
     )
